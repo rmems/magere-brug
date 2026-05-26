@@ -51,9 +51,7 @@ class AWQOrchestrator:
             "generated_artifact": {
                 "format": "awq",
                 "status": "planned",
-                "quantization_bits": quantization_bits,
-                "group_size": group_size,
-                "timestamp_planned": timestamp,
+                "timestamp": timestamp,
             },
             "quantization": {
                 "method": "awq",

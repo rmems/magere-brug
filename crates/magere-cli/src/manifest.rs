@@ -214,6 +214,9 @@ impl Manifest {
         if !VALID_ARCHITECTURES.contains(&self.model.architecture.as_str()) {
             return Err("model.architecture must be one of: dense, moe".to_string());
         }
+        if self.model.architecture == "moe" && self.model.moe_layout.is_none() {
+            return Err("model.moe_layout is required when architecture is moe".to_string());
+        }
 
         if self.source_artifact.format.is_empty() {
             return Err("source_artifact.format is required".to_string());
@@ -385,7 +388,10 @@ mod tests {
                 "name": "Test Model",
                 "family": "test",
                 "parameter_count": {"active": 1000000},
-                "architecture": "moe"
+                "architecture": "moe",
+                "moe_layout": {
+                    "expert_count": 8
+                }
             },
             "source_artifact": {
                 "format": "safetensors",
@@ -431,5 +437,30 @@ mod tests {
         assert_eq!(generated.format, "ternary");
         assert_eq!(generated.status, Some("planned".to_string()));
         assert!(generated.path.is_none());
+    }
+
+    #[test]
+    fn test_moe_requires_layout() {
+        let json = r#"{
+            "metadata": {
+                "schema_version": 1,
+                "created_at": "2026-05-26T00:00:00Z",
+                "manifest_id": "test-model-v1"
+            },
+            "model": {
+                "slug": "test_model",
+                "name": "Test Model",
+                "family": "test",
+                "parameter_count": {"active": 1000000},
+                "architecture": "moe"
+            },
+            "source_artifact": {
+                "format": "safetensors",
+                "path": "/models/test.safetensors"
+            }
+        }"#;
+
+        let manifest = Manifest::from_json(json).unwrap();
+        assert!(manifest.validate().is_err());
     }
 }

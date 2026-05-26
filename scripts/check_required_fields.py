@@ -112,6 +112,8 @@ def check_manifest(path: str) -> list[str]:
 
     if not source.get("path"):
         errors.append(f"{path}: source_artifact.path is required")
+    elif not isinstance(source["path"], str):
+        errors.append(f"{path}: source_artifact.path must be a string")
 
     return errors
 

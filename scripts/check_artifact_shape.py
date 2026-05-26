@@ -98,6 +98,10 @@ def check_artifact(artifact: dict, label: str, path: str) -> list[str]:
                     errors.append(
                         f"{path}: {label}.shard_info.shard_paths must be an array"
                     )
+                elif any(not isinstance(item, str) for item in paths):
+                    errors.append(
+                        f"{path}: {label}.shard_info.shard_paths items must be strings"
+                    )
                 elif count is not None and len(paths) != count:
                     errors.append(
                         f"{path}: {label}.shard_info.shard_paths length ({len(paths)}) "

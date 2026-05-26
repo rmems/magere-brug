@@ -93,6 +93,20 @@ class GGUFManifestBuilder:
     """Build manifest entries from GGUF inspection."""
 
     @staticmethod
+    def _infer_bits(quantization_format: str) -> Optional[int]:
+        mapping = {
+            "q8_0": 8,
+            "q6_k": 6,
+            "q5_k": 5,
+            "q4": 4,
+            "iq4_nl": 4,
+            "iq3_m": 3,
+            "iq2_xxs": 2,
+            "f16": 16,
+        }
+        return mapping.get(quantization_format)
+
+    @staticmethod
     def generate_manifest_snippet(
         file_path: str,
         model_slug: str,
@@ -114,6 +128,14 @@ class GGUFManifestBuilder:
         inspector = GGUFInspector(file_path)
         metadata = inspector.get_metadata()
         
+        quantization_format = metadata["quantization_format"]
+        quantization = {
+            "method": "gguf",
+        }
+        bits = GGUFManifestBuilder._infer_bits(quantization_format)
+        if bits is not None:
+            quantization["bits"] = bits
+
         return {
             "model": {
                 "slug": model_slug,
@@ -126,14 +148,7 @@ class GGUFManifestBuilder:
                 "dtype_summary": metadata["dtype_summary"],
                 "size_bytes": metadata["file_size_bytes"],
             },
-            "quantization": {
-                "method": "gguf",
-                "dtype_variant": metadata["quantization_format"],
-            },
-            "metadata": {
-                "gguf_version": metadata["version"],
-                "tensor_count": metadata["tensor_count"],
-            }
+            "quantization": quantization,
         }
 
 

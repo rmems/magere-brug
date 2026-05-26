@@ -20,6 +20,7 @@ from pathlib import Path
 REQUIRED_TOP_LEVEL = {"schema_version", "created_at", "models"}
 REQUIRED_MODEL_FIELDS = {"slug", "family", "architecture"}
 CLOUD_STUB_REQUIRED = {"stub", "status", "enabled", "requires_secrets"}
+VALID_ARCHITECTURES = {"dense", "moe"}
 
 
 def validate_config(path: str) -> list[str]:
@@ -43,6 +44,18 @@ def validate_config(path: str) -> list[str]:
     if missing:
         errors.append(f"{path}: Missing top-level fields: {missing}")
 
+    schema_version = config.get("schema_version")
+    if schema_version is not None and (
+        not isinstance(schema_version, int)
+        or isinstance(schema_version, bool)
+        or schema_version < 1
+    ):
+        errors.append(f"{path}: schema_version must be an integer >= 1")
+
+    created_at = config.get("created_at")
+    if created_at is not None and not isinstance(created_at, str):
+        errors.append(f"{path}: created_at must be a string")
+
     # Models array
     models = config.get("models", [])
     if not isinstance(models, list):
@@ -58,6 +71,18 @@ def validate_config(path: str) -> list[str]:
         if missing_model:
             errors.append(
                 f"{path}: models[{idx}] missing fields: {missing_model}"
+            )
+
+        for field in REQUIRED_MODEL_FIELDS:
+            if field in model and not isinstance(model[field], str):
+                errors.append(
+                    f"{path}: models[{idx}].{field} must be a string"
+                )
+
+        architecture = model.get("architecture")
+        if isinstance(architecture, str) and architecture not in VALID_ARCHITECTURES:
+            errors.append(
+                f"{path}: models[{idx}].architecture must be one of {VALID_ARCHITECTURES}"
             )
 
     # Cloud stub security check

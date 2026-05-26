@@ -1,0 +1,23 @@
+{
+  "stub": true,
+  "status": "stub",
+  "enabled": false,
+  "requires_secrets": false,
+  "provider": "local-vllm",
+  "description": "Local vLLM server stubs for development and testing",
+  "created_at": "2026-05-26T00:00:00Z",
+  "models": [
+    {
+      "slug": "olmoe_baseline_vllm",
+      "family": "olmoe",
+      "architecture": "moe",
+      "provider_format": "vllm",
+      "model_id": "olmoe_baseline",
+      "api_base": "http://localhost:8000/v1",
+      "status": "planned",
+      "requires_env": [],
+      "manifest_ref": "olmoe-1b-7b-instruct-v1",
+      "notes": "Start vLLM server locally: python -m vllm.entrypoints.openai_api_server --model /models/olmoe/..."
+    }
+  ]
+}

@@ -1,0 +1,37 @@
+{
+  "stub": true,
+  "status": "stub",
+  "enabled": false,
+  "requires_secrets": false,
+  "provider": "local-llamacpp",
+  "description": "Local llama.cpp server stubs for lightweight inference",
+  "created_at": "2026-05-26T00:00:00Z",
+  "models": [
+    {
+      "slug": "gemma4_26b_llamacpp",
+      "family": "gemma",
+      "architecture": "moe",
+      "provider_format": "llamacpp",
+      "model_id": "gemma4_26b_a4b_iq4_nl",
+      "gguf_path": "/models/gemma/gemma-4-26B-A4B-it-UD-IQ4_NL.gguf",
+      "api_base": "http://localhost:8080",
+      "status": "planned",
+      "requires_env": [],
+      "manifest_ref": null,
+      "notes": "Start llama.cpp server: ./server -m /models/gemma/... -ngl 33"
+    },
+    {
+      "slug": "deepseek_coder_llamacpp",
+      "family": "deepseek",
+      "architecture": "dense",
+      "provider_format": "llamacpp",
+      "model_id": "deepseek_coder_v2_lite_q6_k_l",
+      "gguf_path": "/models/deepseek/DeepSeek-Coder-V2-Lite-Instruct-q6_k_l.gguf",
+      "api_base": "http://localhost:8080",
+      "status": "planned",
+      "requires_env": [],
+      "manifest_ref": "deepseek-coder-v2-lite-instruct-v1",
+      "notes": "Start llama.cpp server: ./server -m /models/deepseek/... -ngl 33"
+    }
+  ]
+}

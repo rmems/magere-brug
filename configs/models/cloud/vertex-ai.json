@@ -1,0 +1,23 @@
+{
+  "stub": true,
+  "status": "stub",
+  "enabled": false,
+  "requires_secrets": true,
+  "provider": "vertex-ai",
+  "description": "Google Cloud Vertex AI model backend stubs",
+  "created_at": "2026-05-26T00:00:00Z",
+  "models": [
+    {
+      "slug": "gemma4_26b_a4b_cloud",
+      "family": "gemma",
+      "architecture": "moe",
+      "provider_format": "vertex-ai",
+      "model_endpoint": "[SET_VERTEX_ENDPOINT_ID]",
+      "project_id": "[SET_GCP_PROJECT_ID]",
+      "status": "planned",
+      "requires_env": ["GOOGLE_APPLICATION_CREDENTIALS", "GCP_PROJECT_ID"],
+      "manifest_ref": null,
+      "notes": "Use service account credentials. Do not expose project IDs or endpoint IDs in PR."
+    }
+  ]
+}

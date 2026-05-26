@@ -1,0 +1,71 @@
+{
+  "metadata": {
+    "schema_version": 1,
+    "created_at": "2026-05-26T00:00:00Z",
+    "manifest_id": "olmoe-1b-7b-instruct-v1",
+    "description": "OLMoE MoE model with GGUF local routing target for SAAQ experiments"
+  },
+  "model": {
+    "slug": "olmoe_baseline",
+    "name": "OLMoE-1B-7B-0125-Instruct",
+    "family": "olmoe",
+    "parameter_count": {
+      "active": 7000000000,
+      "total": 8000000000
+    },
+    "architecture": "moe",
+    "moe_layout": {
+      "expert_count": 8,
+      "capacity_factor": 1.25,
+      "routing_strategy": "top-2"
+    }
+  },
+  "source_artifact": {
+    "format": "gguf",
+    "path": "/models/olmoe/OLMoE-1B-7B-0125-Instruct-F16.gguf",
+    "source_url": "https://huggingface.co/allenai/OLMoE-1B-7B-0125-Instruct",
+    "checksum": {
+      "sha256": "abc123def456789abc123def456789abc123def456789abc123def456789abc1"
+    },
+    "dtype_summary": "f16",
+    "size_bytes": 15000000000
+  },
+  "quantization": {
+    "method": "none",
+    "bits": 16,
+    "calibration_dataset": "math_logic"
+  },
+  "backend_compatibility": {
+    "gguf": {
+      "supported": true,
+      "status": "proven"
+    },
+    "safetensors": {
+      "supported": true,
+      "status": "planned"
+    },
+    "awq": {
+      "supported": true,
+      "status": "planned"
+    },
+    "myelin_accelerator": {
+      "supported": true,
+      "status": "planned",
+      "kernel_types": ["binary", "ternary", "saaq"]
+    }
+  },
+  "saaq_experiment": {
+    "saaq_version": "saaq_v1_5",
+    "telemetry_source": "csv_re4_path_tracing_telemetry",
+    "routing_entropy_metrics": {
+      "expert_utilization": 0.87,
+      "entropy_score": 2.14,
+      "load_balance_score": 0.92
+    }
+  },
+  "benchmark_linkage": {
+    "pipeline_id": "olmoe_baseline_csv_re4_control",
+    "status": "completed",
+    "results_path": "/results/olmoe_baseline/csv_re4_path_tracing_telemetry/2026-04-23"
+  }
+}

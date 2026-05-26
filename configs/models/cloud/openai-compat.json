@@ -1,0 +1,47 @@
+{
+  "stub": true,
+  "status": "stub",
+  "enabled": false,
+  "requires_secrets": true,
+  "provider": "openai-compat",
+  "description": "OpenAI-compatible API provider stubs (vLLM, LiteLLM, etc)",
+  "created_at": "2026-05-26T00:00:00Z",
+  "models": [
+    {
+      "slug": "glm46v_flash_cloud",
+      "family": "glm",
+      "architecture": "moe",
+      "provider_format": "openai-compat",
+      "api_base": "[SET_API_BASE_URL]",
+      "model_name": "glm-4.6v-flash",
+      "status": "planned",
+      "requires_env": ["OPENAI_API_KEY", "OPENAI_API_BASE"],
+      "manifest_ref": null,
+      "notes": "Generic OpenAI-compatible endpoint. Set API key via environment variable."
+    },
+    {
+      "slug": "kimi_vl_a3b_cloud",
+      "family": "kimi",
+      "architecture": "moe",
+      "provider_format": "openai-compat",
+      "api_base": "[SET_API_BASE_URL]",
+      "model_name": "kimi-vl-a3b-instruct",
+      "status": "planned",
+      "requires_env": ["OPENAI_API_KEY", "OPENAI_API_BASE"],
+      "manifest_ref": null,
+      "notes": "Generic OpenAI-compatible endpoint. Set API key via environment variable."
+    },
+    {
+      "slug": "zaya1_8b_cloud",
+      "family": "zaya",
+      "architecture": "dense",
+      "provider_format": "openai-compat",
+      "api_base": "[SET_API_BASE_URL]",
+      "model_name": "zaya1-reasoning",
+      "status": "planned",
+      "requires_env": ["OPENAI_API_KEY", "OPENAI_API_BASE"],
+      "manifest_ref": null,
+      "notes": "Generic OpenAI-compatible endpoint. Set API key via environment variable."
+    }
+  ]
+}

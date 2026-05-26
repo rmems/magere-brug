@@ -182,12 +182,18 @@ impl Manifest {
 
     /// Validate required fields
     pub fn validate(&self) -> Result<(), String> {
+        const VALID_SOURCE_FORMATS: &[&str] = &["safetensors", "gguf", "hf_repo", "local_dir"];
+        const VALID_ARCHITECTURES: &[&str] = &["dense", "moe"];
+
         if self.metadata.schema_version < 1 {
             return Err("schema_version must be >= 1".to_string());
         }
 
         if self.metadata.created_at.is_empty() {
             return Err("metadata.created_at is required".to_string());
+        }
+        if chrono::DateTime::parse_from_rfc3339(&self.metadata.created_at).is_err() {
+            return Err("metadata.created_at must be a valid RFC3339 timestamp".to_string());
         }
 
         if self.metadata.manifest_id.is_empty() {
@@ -205,9 +211,18 @@ impl Manifest {
         if self.model.family.is_empty() {
             return Err("model.family is required".to_string());
         }
+        if !VALID_ARCHITECTURES.contains(&self.model.architecture.as_str()) {
+            return Err("model.architecture must be one of: dense, moe".to_string());
+        }
 
         if self.source_artifact.format.is_empty() {
             return Err("source_artifact.format is required".to_string());
+        }
+        if !VALID_SOURCE_FORMATS.contains(&self.source_artifact.format.as_str()) {
+            return Err(
+                "source_artifact.format must be one of: safetensors, gguf, hf_repo, local_dir"
+                    .to_string(),
+            );
         }
 
         if self.source_artifact.path.is_empty() {

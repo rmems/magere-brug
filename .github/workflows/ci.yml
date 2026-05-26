@@ -68,6 +68,7 @@ jobs:
             if [ -f pyproject.toml ]; then
               uv run pytest tests/ -v
             else
+              python -m pip install pytest
               python -m pytest tests/ -v
             fi
           else

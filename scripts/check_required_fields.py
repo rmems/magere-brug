@@ -54,9 +54,13 @@ def check_manifest(path: str) -> list[str]:
 
     if not metadata.get("created_at"):
         errors.append(f"{path}: metadata.created_at is required")
+    elif not isinstance(metadata["created_at"], str):
+        errors.append(f"{path}: metadata.created_at must be a string")
 
     if not metadata.get("manifest_id"):
         errors.append(f"{path}: metadata.manifest_id is required")
+    elif not isinstance(metadata["manifest_id"], str):
+        errors.append(f"{path}: metadata.manifest_id must be a string")
 
     # model
     model = manifest.get("model", {})
@@ -70,7 +74,14 @@ def check_manifest(path: str) -> list[str]:
     if "slug" in model and not isinstance(model["slug"], str):
         errors.append(f"{path}: model.slug must be a string")
 
-    if model.get("architecture") not in VALID_ARCHITECTURES:
+    if "name" in model and not isinstance(model["name"], str):
+        errors.append(f"{path}: model.name must be a string")
+
+    if "family" in model and not isinstance(model["family"], str):
+        errors.append(f"{path}: model.family must be a string")
+
+    architecture = model.get("architecture")
+    if not isinstance(architecture, str) or architecture not in VALID_ARCHITECTURES:
         errors.append(
             f"{path}: model.architecture must be one of {VALID_ARCHITECTURES}"
         )
@@ -94,7 +105,7 @@ def check_manifest(path: str) -> list[str]:
         source = {}
     if not source.get("format"):
         errors.append(f"{path}: source_artifact.format is required")
-    elif source["format"] not in VALID_SOURCE_FORMATS:
+    elif not isinstance(source["format"], str) or source["format"] not in VALID_SOURCE_FORMATS:
         errors.append(
             f"{path}: source_artifact.format must be one of {VALID_SOURCE_FORMATS}"
         )

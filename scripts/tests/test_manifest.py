@@ -318,7 +318,7 @@ class TestSafetensorsInspection:
         # Single dtype
         dtypes = {"float32": 100}
         summary = inspector._summarize_dtypes(dtypes)
-        assert summary == "float32"
+        assert summary == "fp32"
         
         # Mixed dtypes
         dtypes = {"float32": 50, "float16": 50}

@@ -50,7 +50,7 @@ jobs:
             fi
             for stub in "${stubs[@]}"; do
               # Check for actual secret values (not placeholder markers like [SET_*])
-              if grep -iE "\"(password|secret|token|api_key|apikey|private_key|credential)\"\s*:\s*\"[^\[]" "$stub" 2>/dev/null; then
+              if grep -iE "\"(password|secret|token|api_key|apikey|private_key|credential|auth)\"\s*:\s*\"[^\[]" "$stub" 2>/dev/null; then
                 echo "✗ Potential secret found in $stub"
                 FOUND=1
               fi

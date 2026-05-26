@@ -33,6 +33,13 @@ impl ArtifactRegistry {
     pub fn register(&mut self, manifest: &Manifest) -> Result<(), String> {
         manifest.validate()?;
 
+        if self.models.contains_key(&manifest.model.slug) {
+            return Err(format!(
+                "model slug '{}' is already registered",
+                manifest.model.slug
+            ));
+        }
+
         let entry = RegistryEntry {
             slug: manifest.model.slug.clone(),
             manifest_id: manifest.metadata.manifest_id.clone(),

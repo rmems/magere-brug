@@ -69,9 +69,11 @@ class SafetensorsInspector:
         normalized = dtype.lower()
         mapping = {
             "f16": "f16",
+            "float16": "fp16",
             "fp16": "fp16",
             "bf16": "bf16",
             "f32": "fp32",
+            "float32": "fp32",
             "fp32": "fp32",
             "i8": "int8",
             "int8": "int8",

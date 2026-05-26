@@ -33,7 +33,7 @@ def check_artifact(artifact: dict, label: str, path: str) -> list[str]:
     # Path is required unless it's a generated_artifact with planned/skipped status
     status = artifact.get("status")
     if not artifact.get("path"):
-        if label == "generated_artifact" and status in ("planned", "skipped", None):
+        if label == "generated_artifact" and status in ("planned", "skipped"):
             pass  # OK, no path yet
         else:
             errors.append(f"{path}: {label}.path is required")

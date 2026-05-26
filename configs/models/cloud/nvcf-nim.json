@@ -14,7 +14,10 @@
       "provider_format": "nvcf-nim",
       "model_id": "[SET_NVCF_MODEL_ID]",
       "status": "planned",
-      "requires_env": ["NVCF_API_KEY", "NVCF_FUNCTION_ID"],
+      "requires_env": [
+        "NVCF_API_KEY",
+        "NVCF_FUNCTION_ID"
+      ],
       "manifest_ref": null,
       "notes": "Do not expose API keys. Set via environment variables only."
     },
@@ -25,7 +28,10 @@
       "provider_format": "nvcf-nim",
       "model_id": "[SET_NVCF_MODEL_ID]",
       "status": "planned",
-      "requires_env": ["NVCF_API_KEY", "NVCF_FUNCTION_ID"],
+      "requires_env": [
+        "NVCF_API_KEY",
+        "NVCF_FUNCTION_ID"
+      ],
       "manifest_ref": null,
       "notes": "Do not expose API keys. Set via environment variables only."
     },
@@ -36,9 +42,13 @@
       "provider_format": "nvcf-nim",
       "model_id": "[SET_NVCF_MODEL_ID]",
       "status": "planned",
-      "requires_env": ["NVCF_API_KEY", "NVCF_FUNCTION_ID"],
+      "requires_env": [
+        "NVCF_API_KEY",
+        "NVCF_FUNCTION_ID"
+      ],
       "manifest_ref": null,
       "notes": "Do not expose API keys. Set via environment variables only."
     }
-  ]
+  ],
+  "schema_version": 1
 }

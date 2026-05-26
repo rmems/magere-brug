@@ -19,5 +19,6 @@
       "manifest_ref": "olmoe-1b-7b-instruct-v1",
       "notes": "Start vLLM server locally: python -m vllm.entrypoints.openai_api_server --model /models/olmoe/..."
     }
-  ]
+  ],
+  "schema_version": 1
 }

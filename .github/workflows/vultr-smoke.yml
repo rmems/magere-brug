@@ -1,0 +1,136 @@
+name: Vultr Smoke — Manual Only
+
+on:
+  workflow_dispatch:
+    inputs:
+      manifest_path:
+        description: 'Path to manifest for dry-run validation (optional)'
+        required: false
+        default: 'manifests/examples/olmoe-1b-7b-instruct.json'
+      run_setup_check:
+        description: 'Run setup script validation'
+        required: false
+        default: 'true'
+      run_dry_run:
+        description: 'Run dry-run smoke test'
+        required: false
+        default: 'true'
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  smoke-test:
+    name: Vultr Smoke Test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: crates/magere-cli
+
+      - name: Build magere CLI
+        working-directory: crates/magere-cli
+        run: cargo build --release
+
+      - name: Check cloud runner scripts exist
+        if: ${{ inputs.run_setup_check == 'true' }}
+        run: |
+          set -e
+          echo "=== Checking cloud runner scripts ==="
+          
+          # Check for common setup scripts
+          for script in scripts/setup*.sh scripts/run*.sh scripts/smoke*.py; do
+            if [ -f "$script" ]; then
+              echo "✓ Found: $script"
+            fi
+          done
+          
+          # Check cloud stub configs are valid JSON
+          if [ -d configs/models/cloud ]; then
+            for stub in configs/models/cloud/*.json; do
+              python3 -c "import json; json.load(open('$stub'))"
+              echo "✓ Valid JSON: $stub"
+            done
+          fi
+          
+          echo "✓ Cloud runner scripts check completed"
+
+      - name: Validate setup scripts are executable
+        if: ${{ inputs.run_setup_check == 'true' }}
+        run: |
+          set -e
+          echo "=== Validating setup scripts ==="
+          
+          for script in scripts/*.sh; do
+            if [ -f "$script" ]; then
+              if [ -x "$script" ]; then
+                echo "✓ Executable: $script"
+              else
+                echo "⚠ Not executable: $script"
+              fi
+            fi
+          done
+          
+          echo "✓ Setup script validation completed"
+
+      - name: Dry-run manifest smoke test
+        if: ${{ inputs.run_dry_run == 'true' }}
+        run: |
+          set -e
+          MANIFEST="${{ inputs.manifest_path }}"
+          echo "=== Dry-run smoke test: $MANIFEST ==="
+          
+          if [ ! -f "$MANIFEST" ]; then
+            echo "✗ Manifest not found: $MANIFEST"
+            exit 1
+          fi
+          
+          # Validate manifest structure
+          ./crates/magere-cli/target/release/magere validate "$MANIFEST"
+          echo "✓ Manifest validation passed"
+          
+          # Inspect manifest (dry-run, no actual processing)
+          ./crates/magere-cli/target/release/magere inspect "$MANIFEST"
+          echo "✓ Manifest inspection completed"
+          
+          # Verify that source artifact path is local (not a URL to download)
+          SOURCE_PATH=$(python3 -c "import json; print(json.load(open('$MANIFEST'))['source_artifact']['path'])")
+          echo "Source artifact path: $SOURCE_PATH"
+          
+          if [[ "$SOURCE_PATH" == http* ]]; then
+            echo "⚠ Source path is a URL: $SOURCE_PATH"
+            echo "  Skipping download per policy (no giant models automatically)"
+          else
+            echo "✓ Source path is local: $SOURCE_PATH"
+            if [ -f "$SOURCE_PATH" ]; then
+              echo "✓ Source artifact exists locally"
+            else
+              echo "⚠ Source artifact not found locally (expected in CI): $SOURCE_PATH"
+            fi
+          fi
+          
+          echo "✓ Dry-run smoke test completed without downloading models"
+
+      - name: Check environment readiness
+        run: |
+          set -e
+          echo "=== Environment readiness check ==="
+          
+          echo "Rust version:"
+          rustc --version
+          cargo --version
+          
+          echo "Python version:"
+          python3 --version
+          
+          echo "Disk space:"
+          df -h / | tail -1
+          
+          echo "✓ Environment check completed"

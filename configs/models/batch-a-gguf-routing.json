@@ -43,5 +43,6 @@
       "status": "active",
       "manifest_ref": null
     }
-  ]
+  ],
+  "schema_version": 1
 }

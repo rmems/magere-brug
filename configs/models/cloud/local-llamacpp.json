@@ -33,5 +33,6 @@
       "manifest_ref": "deepseek-coder-v2-lite-instruct-v1",
       "notes": "Start llama.cpp server: ./server -m /models/deepseek/... -ngl 33"
     }
-  ]
+  ],
+  "schema_version": 1
 }

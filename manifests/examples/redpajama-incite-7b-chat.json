@@ -51,7 +51,7 @@
       "status": "planned"
     },
     "gptq": {
-      "supported": true,
+      "supported": false,
       "status": "not_applicable"
     }
   },

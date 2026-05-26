@@ -8,7 +8,7 @@ pub struct Manifest {
     pub model: ModelInfo,
     pub source_artifact: Artifact,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub generated_artifact: Option<Artifact>,
+    pub generated_artifact: Option<GeneratedArtifact>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub quantization: Option<Quantization>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -59,6 +59,28 @@ pub struct MoELayout {
 pub struct Artifact {
     pub format: String,
     pub path: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub checksum: Option<Checksum>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dtype_summary: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub size_bytes: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub shard_info: Option<ShardInfo>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub timestamp: Option<String>,
+}
+
+/// Generated artifact with optional path for planned artifacts
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GeneratedArtifact {
+    pub format: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub status: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub source_url: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -151,7 +173,7 @@ impl Manifest {
     }
 
     /// Load manifest from file
-    pub fn from_file(path: &str) -> Result<Self, Box<dyn std::error::Error>> {
+    pub fn from_file<P: AsRef<std::path::Path>>(path: P) -> Result<Self, Box<dyn std::error::Error>> {
         let content = std::fs::read_to_string(path)?;
         Ok(Self::from_json(&content)?)
     }
@@ -167,12 +189,24 @@ impl Manifest {
             return Err("schema_version must be >= 1".to_string());
         }
 
+        if self.metadata.created_at.is_empty() {
+            return Err("metadata.created_at is required".to_string());
+        }
+
+        if self.metadata.manifest_id.is_empty() {
+            return Err("metadata.manifest_id is required".to_string());
+        }
+
         if self.model.slug.is_empty() {
             return Err("model.slug is required".to_string());
         }
 
         if self.model.name.is_empty() {
             return Err("model.name is required".to_string());
+        }
+
+        if self.model.family.is_empty() {
+            return Err("model.family is required".to_string());
         }
 
         if self.source_artifact.format.is_empty() {
@@ -350,5 +384,40 @@ mod tests {
         let manifest = Manifest::from_json(json).unwrap();
         assert_eq!(manifest.source_artifact.format, "safetensors");
         assert!(manifest.validate().is_ok());
+    }
+
+    #[test]
+    fn test_generated_artifact_without_path() {
+        let json = r#"{
+            "metadata": {
+                "schema_version": 1,
+                "created_at": "2026-05-26T00:00:00Z",
+                "manifest_id": "test-model-v1"
+            },
+            "model": {
+                "slug": "test_model",
+                "name": "Test Model",
+                "family": "test",
+                "parameter_count": {"active": 1000000},
+                "architecture": "dense"
+            },
+            "source_artifact": {
+                "format": "safetensors",
+                "path": "/models/test.safetensors"
+            },
+            "generated_artifact": {
+                "format": "ternary",
+                "status": "planned"
+            }
+        }"#;
+
+        let manifest = Manifest::from_json(json);
+        assert!(manifest.is_ok());
+        let m = manifest.unwrap();
+        assert!(m.generated_artifact.is_some());
+        let generated = m.generated_artifact.unwrap();
+        assert_eq!(generated.format, "ternary");
+        assert_eq!(generated.status, Some("planned".to_string()));
+        assert!(generated.path.is_none());
     }
 }

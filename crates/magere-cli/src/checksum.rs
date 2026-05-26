@@ -2,7 +2,7 @@ use sha2::{Sha256, Digest};
 use std::fs;
 
 /// Compute SHA256 checksum of a file
-pub fn compute_file_sha256(path: &str) -> Result<String, Box<dyn std::error::Error>> {
+pub fn compute_file_sha256<P: AsRef<std::path::Path>>(path: P) -> Result<String, Box<dyn std::error::Error>> {
     let file = fs::File::open(path)?;
     let mut hasher = Sha256::new();
     
@@ -29,7 +29,7 @@ pub fn compute_string_sha256(content: &str) -> String {
 }
 
 /// Verify file checksum against expected SHA256
-pub fn verify_checksum(path: &str, expected_sha256: &str) -> Result<bool, Box<dyn std::error::Error>> {
+pub fn verify_checksum<P: AsRef<std::path::Path>>(path: P, expected_sha256: &str) -> Result<bool, Box<dyn std::error::Error>> {
     let actual = compute_file_sha256(path)?;
     Ok(actual.eq_ignore_ascii_case(expected_sha256))
 }
@@ -51,7 +51,7 @@ mod tests {
         let mut temp_file = NamedTempFile::new().unwrap();
         temp_file.write_all(b"test content").unwrap();
         
-        let hash = compute_file_sha256(temp_file.path().to_str().unwrap()).unwrap();
+        let hash = compute_file_sha256(temp_file.path()).unwrap();
         assert_eq!(hash, "6ae8a75555209fd6c44157c0aed8016e763ff435a19cf186f76863140143ff72");
     }
 
@@ -61,7 +61,7 @@ mod tests {
         temp_file.write_all(b"test content").unwrap();
         
         let valid = verify_checksum(
-            temp_file.path().to_str().unwrap(),
+            temp_file.path(),
             "6ae8a75555209fd6c44157c0aed8016e763ff435a19cf186f76863140143ff72"
         ).unwrap();
         assert!(valid);
@@ -73,7 +73,7 @@ mod tests {
         temp_file.write_all(b"test content").unwrap();
         
         let valid = verify_checksum(
-            temp_file.path().to_str().unwrap(),
+            temp_file.path(),
             "invalid_checksum_hash"
         ).unwrap();
         assert!(!valid);

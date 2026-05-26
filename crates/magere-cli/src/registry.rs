@@ -38,7 +38,7 @@ impl ArtifactRegistry {
             manifest_id: manifest.metadata.manifest_id.clone(),
             family: manifest.model.family.clone(),
             status: "registered".to_string(),
-            registered_at: chrono::Local::now().to_rfc3339(),
+            registered_at: chrono::Utc::now().to_rfc3339(),
             notes: manifest.metadata.description.clone(),
         };
 

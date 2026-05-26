@@ -87,8 +87,8 @@ jobs:
                 FOUND=1
               fi
               
-              # Check for C:\Users\ patterns (Windows)
-              if grep -E "C:\\\\Users\\\\" "$file" 2>/dev/null; then
+              # Check for C:\\Users\\ patterns (Windows, JSON-escaped)
+              if grep -E "C:\\\\\\\\Users\\\\\\\\" "$file" 2>/dev/null; then
                 echo "✗ Absolute Windows path found in $file"
                 FOUND=1
               fi
@@ -122,7 +122,17 @@ jobs:
         run: |
           set -e
           echo "=== Checking manifest JSON validity ==="
-          for manifest in manifests/examples/*.json; do
+          if [ ! -d manifests/examples ]; then
+            echo "✗ manifests/examples directory not found"
+            exit 1
+          fi
+          shopt -s nullglob
+          files=(manifests/examples/*.json)
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "✗ No JSON files found in manifests/examples"
+            exit 1
+          fi
+          for manifest in "${files[@]}"; do
             python3 -c "import json; json.load(open('$manifest'))"
           done
           echo "✓ All manifest JSON files are valid"

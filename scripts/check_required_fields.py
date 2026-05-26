@@ -69,11 +69,16 @@ def check_manifest(path: str) -> list[str]:
         )
 
     param_count = model.get("parameter_count", {})
-    active = param_count.get("active")
-    if active is not None and (not isinstance(active, int) or active < 0):
-        errors.append(
-            f"{path}: model.parameter_count.active must be a non-negative integer"
-        )
+    if not isinstance(param_count, dict):
+        errors.append(f"{path}: model.parameter_count must be an object")
+    elif "active" not in param_count:
+        errors.append(f"{path}: model.parameter_count.active is required")
+    else:
+        active = param_count["active"]
+        if not isinstance(active, int) or isinstance(active, bool) or active < 0:
+            errors.append(
+                f"{path}: model.parameter_count.active must be a non-negative integer"
+            )
 
     # source_artifact
     source = manifest.get("source_artifact", {})

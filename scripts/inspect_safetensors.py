@@ -42,14 +42,14 @@ class SafetensorsInspector:
                 header_json = f.read(header_len).decode("utf-8")
                 header = json.loads(header_json)
             
-            # Extract tensor information
-            dtypes = self._extract_dtypes(header)
-            tensor_count = len(header)
+            # Extract tensor information (filter out __metadata__)
+            tensors = {k: v for k, v in header.items() if isinstance(v, dict) and "dtype" in v}
+            dtypes = self._extract_dtypes(tensors)
             
             return {
                 "dtype_summary": self._summarize_dtypes(dtypes),
-                "tensor_count": tensor_count,
-                "tensors": list(header.keys()),
+                "tensor_count": len(tensors),
+                "tensors": list(tensors.keys()),
                 "dtypes": dtypes,
                 "file_size_bytes": self.file_path.stat().st_size,
             }

@@ -152,6 +152,7 @@ class AWQManifestBuilder:
                 "format": "awq",
                 "status": "planned",
                 "path": output_path,
+                "timestamp": timestamp,
             },
             "quantization": {
                 "method": "awq",

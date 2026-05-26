@@ -65,15 +65,15 @@ class GGUFInspector:
             return "q6_k"
         elif "q5_k" in filename_lower:
             return "q5_k"
+        elif "iq" in filename_lower:
+            # IQ quantization variants (check before generic q4)
+            for variant in ["iq4_nl", "iq3_m", "iq2_xxs"]:
+                if variant in filename_lower:
+                    return variant
         elif "q4" in filename_lower:
             return "q4"
         elif "f16" in filename_lower or "fp16" in filename_lower:
             return "f16"
-        elif "iq" in filename_lower:
-            # IQ quantization variants
-            for variant in ["iq4_nl", "iq3_m", "iq2_xxs"]:
-                if variant in filename_lower:
-                    return variant
         
         return "unknown"
 

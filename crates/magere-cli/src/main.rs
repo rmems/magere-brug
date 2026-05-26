@@ -5,7 +5,7 @@ mod registry;
 use clap::{Parser, Subcommand};
 use manifest::Manifest;
 use registry::ArtifactRegistry;
-use std::path::PathBuf;
+use std::path::Path;
 
 #[derive(Parser)]
 #[command(name = "magere")]
@@ -21,29 +21,29 @@ enum Commands {
     Validate {
         /// Path to manifest JSON file
         #[arg(value_name = "FILE")]
-        path: PathBuf,
+        path: std::path::PathBuf,
     },
     /// Register a model from its manifest
     Register {
         /// Path to manifest JSON file
         #[arg(value_name = "FILE")]
-        manifest: PathBuf,
+        manifest: std::path::PathBuf,
 
         /// Path to save registry (optional)
         #[arg(short, long)]
-        registry: Option<PathBuf>,
+        registry: Option<std::path::PathBuf>,
     },
     /// Inspect a manifest
     Inspect {
         /// Path to manifest JSON file
         #[arg(value_name = "FILE")]
-        path: PathBuf,
+        path: std::path::PathBuf,
     },
     /// Verify artifact checksum
     Verify {
         /// Path to artifact file
         #[arg(value_name = "FILE")]
-        artifact: PathBuf,
+        artifact: std::path::PathBuf,
 
         /// Expected SHA256 checksum
         #[arg(value_name = "SHA256")]
@@ -64,8 +64,8 @@ fn main() {
                 }
             }
         }
-        Commands::Register { manifest, registry: _ } => {
-            match register_command(&manifest) {
+        Commands::Register { manifest, registry } => {
+            match register_command(&manifest, registry.as_deref()) {
                 Ok(msg) => println!("{}", msg),
                 Err(e) => {
                     eprintln!("Error: {}", e);
@@ -94,8 +94,8 @@ fn main() {
     }
 }
 
-fn validate_command(path: &PathBuf) -> Result<String, String> {
-    let manifest = Manifest::from_file(path.to_str().unwrap())
+fn validate_command(path: &Path) -> Result<String, String> {
+    let manifest = Manifest::from_file(path)
         .map_err(|e| format!("Failed to load manifest: {}", e))?;
 
     manifest.validate()?;
@@ -106,23 +106,43 @@ fn validate_command(path: &PathBuf) -> Result<String, String> {
     ))
 }
 
-fn register_command(manifest_path: &PathBuf) -> Result<String, String> {
-    let manifest = Manifest::from_file(manifest_path.to_str().unwrap())
+fn register_command(
+    manifest_path: &Path,
+    registry_path: Option<&Path>,
+) -> Result<String, String> {
+    let manifest = Manifest::from_file(manifest_path)
         .map_err(|e| format!("Failed to load manifest: {}", e))?;
 
     manifest.validate()?;
 
-    let mut registry = ArtifactRegistry::new();
+    let registry_file = registry_path.unwrap_or_else(|| Path::new("registry.json"));
+    let mut registry = if registry_file.exists() {
+        let content = std::fs::read_to_string(registry_file)
+            .map_err(|e| format!("Failed to read registry: {}", e))?;
+        ArtifactRegistry::from_json(&content)
+            .map_err(|e| format!("Failed to parse registry: {}", e))?
+    } else {
+        ArtifactRegistry::new()
+    };
+
     registry.register(&manifest)?;
 
+    let serialized = registry
+        .to_json_pretty()
+        .map_err(|e| format!("Failed to serialize registry: {}", e))?;
+    std::fs::write(registry_file, serialized)
+        .map_err(|e| format!("Failed to write registry: {}", e))?;
+
     Ok(format!(
-        "✓ Registered model '{}' (slug: {})",
-        manifest.model.name, manifest.model.slug
+        "✓ Registered model '{}' (slug: {}) to {}",
+        manifest.model.name,
+        manifest.model.slug,
+        registry_file.display()
     ))
 }
 
-fn inspect_command(path: &PathBuf) -> Result<String, String> {
-    let manifest = Manifest::from_file(path.to_str().unwrap())
+fn inspect_command(path: &Path) -> Result<String, String> {
+    let manifest = Manifest::from_file(path)
         .map_err(|e| format!("Failed to load manifest: {}", e))?;
 
     let mut output = String::new();
@@ -155,7 +175,12 @@ fn inspect_command(path: &PathBuf) -> Result<String, String> {
 
     if let Some(generated) = &manifest.generated_artifact {
         output.push_str(&format!("Generated Format: {}\n", generated.format));
-        output.push_str(&format!("Generated Path: {}\n", generated.path));
+        if let Some(path) = &generated.path {
+            output.push_str(&format!("Generated Path: {}\n", path));
+        }
+        if let Some(status) = &generated.status {
+            output.push_str(&format!("Generated Status: {}\n", status));
+        }
     }
 
     if let Some(quant) = &manifest.quantization {
@@ -170,8 +195,8 @@ fn inspect_command(path: &PathBuf) -> Result<String, String> {
     Ok(output)
 }
 
-fn verify_command(artifact: &PathBuf, expected_checksum: &str) -> Result<String, String> {
-    let valid = checksum::verify_checksum(artifact.to_str().unwrap(), expected_checksum)
+fn verify_command(artifact: &Path, expected_checksum: &str) -> Result<String, String> {
+    let valid = checksum::verify_checksum(artifact, expected_checksum)
         .map_err(|e| format!("Failed to verify checksum: {}", e))?;
 
     if valid {
@@ -205,6 +230,13 @@ mod tests {
     #[test]
     fn test_cli_parser_verify() {
         let args = vec!["magere", "verify", "/path/to/artifact", "abc123"];
+        let cli = Cli::try_parse_from(args);
+        assert!(cli.is_ok());
+    }
+
+    #[test]
+    fn test_cli_parser_register() {
+        let args = vec!["magere", "register", "/path/to/manifest.json", "--registry", "/path/to/registry.json"];
         let cli = Cli::try_parse_from(args);
         assert!(cli.is_ok());
     }

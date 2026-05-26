@@ -35,6 +35,10 @@ def validate_config(path: str) -> list[str]:
         return errors
 
     # Top-level fields
+    if not isinstance(config, dict):
+        errors.append(f"{path}: Root value must be an object")
+        return errors
+    
     missing = REQUIRED_TOP_LEVEL - set(config.keys())
     if missing:
         errors.append(f"{path}: Missing top-level fields: {missing}")

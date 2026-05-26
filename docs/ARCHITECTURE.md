@@ -261,7 +261,7 @@ A manifest guarantees model reproducibility if:
    - For safetensors: shard paths, shard sizes, dtype summary
 
 2. **Quantization parameters are captured:**
-   - Method (awq, gguf, gptq, ternary, binary)
+   - Method (awq, gptq, ternary, binary, none)
    - Bit width, group size
    - Calibration dataset reference
    - Calibration config path

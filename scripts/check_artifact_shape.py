@@ -58,7 +58,7 @@ def check_artifact(artifact: dict, label: str, path: str) -> list[str]:
 
     # size_bytes
     size = artifact.get("size_bytes")
-    if size is not None and (not isinstance(size, int) or size < 0):
+    if size is not None and (not isinstance(size, int) or isinstance(size, bool) or size < 0):
         errors.append(
             f"{path}: {label}.size_bytes must be a non-negative integer"
         )
@@ -70,7 +70,7 @@ def check_artifact(artifact: dict, label: str, path: str) -> list[str]:
             errors.append(f"{path}: {label}.shard_info must be an object")
         else:
             count = shards.get("shard_count")
-            if count is not None and (not isinstance(count, int) or count < 1):
+            if count is not None and (not isinstance(count, int) or isinstance(count, bool) or count < 1):
                 errors.append(
                     f"{path}: {label}.shard_info.shard_count must be a positive integer"
                 )

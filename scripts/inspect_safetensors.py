@@ -71,8 +71,9 @@ class SafetensorsInspector:
             return "unknown"
         
         most_common = max(dtypes.items(), key=lambda x: x[1])
+        normalized = most_common[0].lower()
         if len(dtypes) == 1:
-            return most_common[0]
+            return normalized
         else:
             return "mixed"
 

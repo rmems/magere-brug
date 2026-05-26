@@ -44,9 +44,11 @@ def check_artifact(artifact: dict, label: str, path: str) -> list[str]:
         if not isinstance(checksum, dict):
             errors.append(f"{path}: {label}.checksum must be an object")
         else:
+            has_any_hash = False
             for key in ["sha256", "md5"]:
                 value = checksum.get(key)
                 if value is not None:
+                    has_any_hash = True
                     if not isinstance(value, str):
                         errors.append(
                             f"{path}: {label}.checksum.{key} must be a string"
@@ -55,6 +57,10 @@ def check_artifact(artifact: dict, label: str, path: str) -> list[str]:
                         errors.append(
                             f"{path}: {label}.checksum.{key} does not look like a hex hash"
                         )
+            if not has_any_hash:
+                errors.append(
+                    f"{path}: {label}.checksum must contain at least one hash (sha256 or md5)"
+                )
 
     # size_bytes
     size = artifact.get("size_bytes")
@@ -70,7 +76,11 @@ def check_artifact(artifact: dict, label: str, path: str) -> list[str]:
             errors.append(f"{path}: {label}.shard_info must be an object")
         else:
             count = shards.get("shard_count")
-            if count is not None and (not isinstance(count, int) or isinstance(count, bool) or count < 1):
+            if count is None:
+                errors.append(
+                    f"{path}: {label}.shard_info.shard_count is required when shard_info is present"
+                )
+            elif not isinstance(count, int) or isinstance(count, bool) or count < 1:
                 errors.append(
                     f"{path}: {label}.shard_info.shard_count must be a positive integer"
                 )

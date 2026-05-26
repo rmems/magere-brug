@@ -44,7 +44,12 @@ jobs:
           FOUND=0
           
           if [ -d configs/models/cloud ]; then
-            for stub in configs/models/cloud/*.json; do
+            shopt -s nullglob
+            stubs=(configs/models/cloud/*.json)
+            if [ ${#stubs[@]} -eq 0 ]; then
+              echo "⚠ No cloud stub files found"
+            fi
+            for stub in "${stubs[@]}"; do
               # Check for actual secret values (not placeholder markers like [SET_*])
               if grep -iE "\"(password|secret|token|api_key|apikey|private_key|credential)\"\s*:\s*\"[^\[]" "$stub" 2>/dev/null; then
                 echo "✗ Potential secret found in $stub"
@@ -133,6 +138,6 @@ jobs:
             exit 1
           fi
           for manifest in "${files[@]}"; do
-            python3 -c "import json; json.load(open('$manifest'))"
+            python3 -c "import json, sys; json.load(open(sys.argv[1]))" "$manifest"
           done
           echo "✓ All manifest JSON files are valid"

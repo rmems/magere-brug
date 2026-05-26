@@ -38,9 +38,20 @@ class GGUFInspector:
                 if magic != b"GGUF":
                     raise ValueError("Invalid GGUF file: wrong magic bytes")
                 
-                version = int.from_bytes(f.read(4), byteorder="little")
-                tensor_count = int.from_bytes(f.read(8), byteorder="little")
-                metadata_count = int.from_bytes(f.read(8), byteorder="little")
+                version_bytes = f.read(4)
+                if len(version_bytes) != 4:
+                    raise ValueError("Truncated GGUF file: missing version bytes")
+                version = int.from_bytes(version_bytes, byteorder="little")
+                
+                tensor_count_bytes = f.read(8)
+                if len(tensor_count_bytes) != 8:
+                    raise ValueError("Truncated GGUF file: missing tensor_count")
+                tensor_count = int.from_bytes(tensor_count_bytes, byteorder="little")
+                
+                metadata_count_bytes = f.read(8)
+                if len(metadata_count_bytes) != 8:
+                    raise ValueError("Truncated GGUF file: missing metadata_count")
+                metadata_count = int.from_bytes(metadata_count_bytes, byteorder="little")
             
             return {
                 "format": "gguf",
@@ -116,7 +127,8 @@ class GGUFManifestBuilder:
                 "size_bytes": metadata["file_size_bytes"],
             },
             "quantization": {
-                "method": metadata["quantization_format"],
+                "method": "gguf",
+                "dtype_variant": metadata["quantization_format"],
             },
             "metadata": {
                 "gguf_version": metadata["version"],

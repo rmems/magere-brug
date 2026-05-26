@@ -282,6 +282,7 @@
             2,
             3,
             4,
+            5,
             6,
             8,
             16
@@ -456,6 +457,23 @@
           "type": "string",
           "description": "Path to benchmark results (if completed)"
         }
+      }
+    }
+  },
+  "if": {
+    "properties": {
+      "model": {
+        "properties": {
+          "architecture": { "const": "moe" }
+        }
+      }
+    }
+  },
+  "then": {
+    "required": ["model"],
+    "properties": {
+      "model": {
+        "required": ["moe_layout"]
       }
     }
   },

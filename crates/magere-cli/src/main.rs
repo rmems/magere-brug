@@ -1,5 +1,5 @@
-mod manifest;
 mod checksum;
+mod manifest;
 mod registry;
 
 use clap::{Parser, Subcommand};
@@ -55,15 +55,13 @@ fn main() {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Validate { path } => {
-            match validate_command(&path) {
-                Ok(msg) => println!("{}", msg),
-                Err(e) => {
-                    eprintln!("Error: {}", e);
-                    std::process::exit(1);
-                }
+        Commands::Validate { path } => match validate_command(&path) {
+            Ok(msg) => println!("{}", msg),
+            Err(e) => {
+                eprintln!("Error: {}", e);
+                std::process::exit(1);
             }
-        }
+        },
         Commands::Register { manifest, registry } => {
             match register_command(&manifest, registry.as_deref()) {
                 Ok(msg) => println!("{}", msg),
@@ -73,30 +71,26 @@ fn main() {
                 }
             }
         }
-        Commands::Inspect { path } => {
-            match inspect_command(&path) {
-                Ok(msg) => println!("{}", msg),
-                Err(e) => {
-                    eprintln!("Error: {}", e);
-                    std::process::exit(1);
-                }
+        Commands::Inspect { path } => match inspect_command(&path) {
+            Ok(msg) => println!("{}", msg),
+            Err(e) => {
+                eprintln!("Error: {}", e);
+                std::process::exit(1);
             }
-        }
-        Commands::Verify { artifact, checksum } => {
-            match verify_command(&artifact, &checksum) {
-                Ok(msg) => println!("{}", msg),
-                Err(e) => {
-                    eprintln!("Error: {}", e);
-                    std::process::exit(1);
-                }
+        },
+        Commands::Verify { artifact, checksum } => match verify_command(&artifact, &checksum) {
+            Ok(msg) => println!("{}", msg),
+            Err(e) => {
+                eprintln!("Error: {}", e);
+                std::process::exit(1);
             }
-        }
+        },
     }
 }
 
 fn validate_command(path: &Path) -> Result<String, String> {
-    let manifest = Manifest::from_file(path)
-        .map_err(|e| format!("Failed to load manifest: {}", e))?;
+    let manifest =
+        Manifest::from_file(path).map_err(|e| format!("Failed to load manifest: {}", e))?;
 
     manifest.validate()?;
 
@@ -106,10 +100,7 @@ fn validate_command(path: &Path) -> Result<String, String> {
     ))
 }
 
-fn register_command(
-    manifest_path: &Path,
-    registry_path: Option<&Path>,
-) -> Result<String, String> {
+fn register_command(manifest_path: &Path, registry_path: Option<&Path>) -> Result<String, String> {
     let manifest = Manifest::from_file(manifest_path)
         .map_err(|e| format!("Failed to load manifest: {}", e))?;
 
@@ -142,12 +133,15 @@ fn register_command(
 }
 
 fn inspect_command(path: &Path) -> Result<String, String> {
-    let manifest = Manifest::from_file(path)
-        .map_err(|e| format!("Failed to load manifest: {}", e))?;
+    let manifest =
+        Manifest::from_file(path).map_err(|e| format!("Failed to load manifest: {}", e))?;
 
     let mut output = String::new();
     output.push_str(&format!("Manifest ID: {}\n", manifest.metadata.manifest_id));
-    output.push_str(&format!("Model: {} ({})\n", manifest.model.name, manifest.model.family));
+    output.push_str(&format!(
+        "Model: {} ({})\n",
+        manifest.model.name, manifest.model.family
+    ));
     output.push_str(&format!("Slug: {}\n", manifest.model.slug));
     output.push_str(&format!("Architecture: {}\n", manifest.model.architecture));
     output.push_str(&format!(
@@ -160,17 +154,20 @@ fn inspect_command(path: &Path) -> Result<String, String> {
     }
     output.push('\n');
 
-    output.push_str(&format!("Source Format: {}\n", manifest.source_artifact.format));
+    output.push_str(&format!(
+        "Source Format: {}\n",
+        manifest.source_artifact.format
+    ));
     output.push_str(&format!("Source Path: {}\n", manifest.source_artifact.path));
 
     if let Some(url) = &manifest.source_artifact.source_url {
         output.push_str(&format!("Source URL: {}\n", url));
     }
 
-    if let Some(checksum) = &manifest.source_artifact.checksum {
-        if let Some(sha256) = &checksum.sha256 {
-            output.push_str(&format!("SHA256: {}\n", sha256));
-        }
+    if let Some(checksum) = &manifest.source_artifact.checksum
+        && let Some(sha256) = &checksum.sha256
+    {
+        output.push_str(&format!("SHA256: {}\n", sha256));
     }
 
     if let Some(generated) = &manifest.generated_artifact {
@@ -202,10 +199,7 @@ fn verify_command(artifact: &Path, expected_checksum: &str) -> Result<String, St
     if valid {
         Ok(format!("✓ Checksum verified for {}", artifact.display()))
     } else {
-        Err(format!(
-            "✗ Checksum mismatch for {}",
-            artifact.display()
-        ))
+        Err(format!("✗ Checksum mismatch for {}", artifact.display()))
     }
 }
 
@@ -236,7 +230,13 @@ mod tests {
 
     #[test]
     fn test_cli_parser_register() {
-        let args = vec!["magere", "register", "/path/to/manifest.json", "--registry", "/path/to/registry.json"];
+        let args = vec![
+            "magere",
+            "register",
+            "/path/to/manifest.json",
+            "--registry",
+            "/path/to/registry.json",
+        ];
         let cli = Cli::try_parse_from(args);
         assert!(cli.is_ok());
     }

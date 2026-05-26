@@ -173,14 +173,11 @@ impl Manifest {
     }
 
     /// Load manifest from file
-    pub fn from_file<P: AsRef<std::path::Path>>(path: P) -> Result<Self, Box<dyn std::error::Error>> {
+    pub fn from_file<P: AsRef<std::path::Path>>(
+        path: P,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
         let content = std::fs::read_to_string(path)?;
         Ok(Self::from_json(&content)?)
-    }
-
-    /// Serialize to JSON string
-    pub fn to_json_pretty(&self) -> Result<String, serde_json::Error> {
-        serde_json::to_string_pretty(self)
     }
 
     /// Validate required fields

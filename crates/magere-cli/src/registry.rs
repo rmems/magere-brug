@@ -47,16 +47,19 @@ impl ArtifactRegistry {
     }
 
     /// Look up a model by slug
+    #[allow(dead_code)]
     pub fn lookup(&self, slug: &str) -> Option<&RegistryEntry> {
         self.models.get(slug)
     }
 
     /// List all registered models
+    #[allow(dead_code)]
     pub fn list_all(&self) -> Vec<&RegistryEntry> {
         self.models.values().collect()
     }
 
     /// Count registered models
+    #[allow(dead_code)]
     pub fn count(&self) -> usize {
         self.models.len()
     }

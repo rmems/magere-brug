@@ -40,7 +40,6 @@ jobs:
           set -e
           echo "=== Checking for secrets in cloud stubs ==="
           
-          SECRET_PATTERNS="password|secret|token|api_key|apikey|private_key|credential|auth"
           FOUND=0
           
           if [ -d configs/models/cloud ]; then

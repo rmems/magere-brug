@@ -56,7 +56,7 @@ jobs:
         working-directory: scripts
         run: |
           if [ -f pyproject.toml ]; then
-            uv sync
+            uv sync --extra dev
           else
             echo "No pyproject.toml found, skipping uv sync"
           fi

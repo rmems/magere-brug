@@ -65,13 +65,28 @@ class SafetensorsInspector:
                 dtypes[dtype] = dtypes.get(dtype, 0) + 1
         return dtypes
 
+    def _normalize_dtype(self, dtype: str) -> str:
+        normalized = dtype.lower()
+        mapping = {
+            "f16": "f16",
+            "fp16": "fp16",
+            "bf16": "bf16",
+            "f32": "fp32",
+            "fp32": "fp32",
+            "i8": "int8",
+            "int8": "int8",
+            "i4": "int4",
+            "int4": "int4",
+        }
+        return mapping.get(normalized, normalized)
+
     def _summarize_dtypes(self, dtypes: Dict[str, int]) -> str:
         """Summarize dtypes for manifest."""
         if not dtypes:
             return "unknown"
         
         most_common = max(dtypes.items(), key=lambda x: x[1])
-        normalized = most_common[0].lower()
+        normalized = self._normalize_dtype(most_common[0])
         if len(dtypes) == 1:
             return normalized
         else:

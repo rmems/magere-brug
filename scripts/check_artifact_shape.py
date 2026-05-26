@@ -17,7 +17,7 @@ import json
 import sys
 import re
 
-HEX_PATTERN = re.compile(r"^[a-fA-F0-9]{32,64}$")
+HEX_PATTERN = re.compile(r"^[a-fA-F0-9]+$")
 
 
 def check_artifact(artifact: dict, label: str, path: str) -> list[str]:
@@ -56,6 +56,14 @@ def check_artifact(artifact: dict, label: str, path: str) -> list[str]:
                     elif not HEX_PATTERN.match(value):
                         errors.append(
                             f"{path}: {label}.checksum.{key} does not look like a hex hash"
+                        )
+                    elif key == "sha256" and len(value) != 64:
+                        errors.append(
+                            f"{path}: {label}.checksum.sha256 must be 64 hex characters"
+                        )
+                    elif key == "md5" and len(value) != 32:
+                        errors.append(
+                            f"{path}: {label}.checksum.md5 must be 32 hex characters"
                         )
             if not has_any_hash:
                 errors.append(
@@ -130,13 +138,20 @@ def check_manifest(path: str) -> list[str]:
             errors.append(f"{path}: quantization must be an object")
         else:
             bits = quant.get("bits")
-            if bits is not None and bits not in {1, 2, 3, 4, 6, 8, 16}:
+            if (
+                bits is not None
+                and (
+                    not isinstance(bits, int)
+                    or isinstance(bits, bool)
+                    or bits not in {1, 2, 3, 4, 5, 6, 8, 16}
+                )
+            ):
                 errors.append(
-                    f"{path}: quantization.bits must be one of [1, 2, 3, 4, 6, 8, 16]"
+                    f"{path}: quantization.bits must be one of [1, 2, 3, 4, 5, 6, 8, 16]"
                 )
             group_size = quant.get("group_size")
             if group_size is not None and (
-                not isinstance(group_size, int) or group_size < 1
+                not isinstance(group_size, int) or isinstance(group_size, bool) or group_size < 1
             ):
                 errors.append(
                     f"{path}: quantization.group_size must be a positive integer"

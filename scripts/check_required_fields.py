@@ -39,11 +39,15 @@ def check_manifest(path: str) -> list[str]:
 
     # metadata
     metadata = manifest.get("metadata", {})
+    if not isinstance(metadata, dict):
+        errors.append(f"{path}: metadata must be an object")
+        metadata = {}
     missing_meta = REQUIRED_METADATA - set(metadata.keys())
     if missing_meta:
         errors.append(f"{path}: Missing metadata fields: {missing_meta}")
 
-    if metadata.get("schema_version", 0) < 1:
+    schema_version = metadata.get("schema_version", 0)
+    if not isinstance(schema_version, int) or isinstance(schema_version, bool) or schema_version < 1:
         errors.append(
             f"{path}: metadata.schema_version must be >= 1"
         )
@@ -56,11 +60,14 @@ def check_manifest(path: str) -> list[str]:
 
     # model
     model = manifest.get("model", {})
+    if not isinstance(model, dict):
+        errors.append(f"{path}: model must be an object")
+        model = {}
     missing_model = REQUIRED_MODEL - set(model.keys())
     if missing_model:
         errors.append(f"{path}: Missing model fields: {missing_model}")
 
-    if model.get("slug") and not isinstance(model["slug"], str):
+    if "slug" in model and not isinstance(model["slug"], str):
         errors.append(f"{path}: model.slug must be a string")
 
     if model.get("architecture") not in VALID_ARCHITECTURES:
@@ -82,6 +89,9 @@ def check_manifest(path: str) -> list[str]:
 
     # source_artifact
     source = manifest.get("source_artifact", {})
+    if not isinstance(source, dict):
+        errors.append(f"{path}: source_artifact must be an object")
+        source = {}
     if not source.get("format"):
         errors.append(f"{path}: source_artifact.format is required")
     elif source["format"] not in VALID_SOURCE_FORMATS:

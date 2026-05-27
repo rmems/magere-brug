@@ -51,6 +51,201 @@
       ],
       "manifest_ref": null,
       "notes": "Generic OpenAI-compatible endpoint. Set API key via environment variable."
+    },
+    {
+      "slug": "glm47_flash_cloud",
+      "family": "glm",
+      "architecture": "moe",
+      "provider_format": "openai-compat",
+      "api_base": "[SET_API_BASE_URL]",
+      "model_name": "GLM-4.7-Flash",
+      "status": "planned",
+      "requires_env": [
+        "OPENAI_API_KEY",
+        "OPENAI_API_BASE"
+      ],
+      "manifest_ref": null,
+      "notes": "Generic OpenAI-compatible endpoint. Set API key via environment variable."
+    },
+    {
+      "slug": "deepseek_v4_flash_cloud",
+      "family": "deepseek",
+      "architecture": "moe",
+      "provider_format": "openai-compat",
+      "api_base": "[SET_API_BASE_URL]",
+      "model_name": "DeepSeek-V4-Flash",
+      "status": "planned",
+      "requires_env": [
+        "OPENAI_API_KEY",
+        "OPENAI_API_BASE"
+      ],
+      "manifest_ref": null,
+      "notes": "Generic OpenAI-compatible endpoint. Set API key via environment variable."
+    },
+    {
+      "slug": "gpt_oss_120b_cloud",
+      "family": "gpt_oss",
+      "architecture": "dense",
+      "provider_format": "openai-compat",
+      "api_base": "[SET_API_BASE_URL]",
+      "model_name": "gpt-oss-120b",
+      "status": "planned",
+      "requires_env": [
+        "OPENAI_API_KEY",
+        "OPENAI_API_BASE"
+      ],
+      "manifest_ref": null,
+      "notes": "Generic OpenAI-compatible endpoint. Set API key via environment variable."
+    },
+    {
+      "slug": "step_3_5_flash_cloud",
+      "family": "stepfun",
+      "architecture": "dense",
+      "provider_format": "openai-compat",
+      "api_base": "[SET_API_BASE_URL]",
+      "model_name": "Step-3.5-Flash",
+      "status": "planned",
+      "requires_env": [
+        "OPENAI_API_KEY",
+        "OPENAI_API_BASE"
+      ],
+      "manifest_ref": null,
+      "notes": "Generic OpenAI-compatible endpoint. Set API key via environment variable."
+    },
+    {
+      "slug": "minimax_m2_7_cloud",
+      "family": "minimax",
+      "architecture": "dense",
+      "provider_format": "openai-compat",
+      "api_base": "[SET_API_BASE_URL]",
+      "model_name": "MiniMax-M2.7",
+      "status": "planned",
+      "requires_env": [
+        "OPENAI_API_KEY",
+        "OPENAI_API_BASE"
+      ],
+      "manifest_ref": null,
+      "notes": "Generic OpenAI-compatible endpoint. Set API key via environment variable."
+    },
+    {
+      "slug": "command_a_plus_05_2026_cloud",
+      "family": "command",
+      "architecture": "dense",
+      "provider_format": "openai-compat",
+      "api_base": "[SET_API_BASE_URL]",
+      "model_name": "command-a-plus-05-2026-bf16",
+      "status": "planned",
+      "requires_env": [
+        "OPENAI_API_KEY",
+        "OPENAI_API_BASE"
+      ],
+      "manifest_ref": null,
+      "notes": "Generic OpenAI-compatible endpoint. Set API key via environment variable."
+    },
+    {
+      "slug": "qwen3_6_35b_a3b_cloud",
+      "family": "qwen",
+      "architecture": "moe",
+      "provider_format": "openai-compat",
+      "api_base": "[SET_API_BASE_URL]",
+      "model_name": "Qwen3.6-35B-A3B",
+      "status": "planned",
+      "requires_env": [
+        "OPENAI_API_KEY",
+        "OPENAI_API_BASE"
+      ],
+      "manifest_ref": null,
+      "notes": "Generic OpenAI-compatible endpoint. Set API key via environment variable."
+    },
+    {
+      "slug": "emo_1b14b_1t_cloud",
+      "family": "emo",
+      "architecture": "moe",
+      "provider_format": "openai-compat",
+      "api_base": "[SET_API_BASE_URL]",
+      "model_name": "Emo_1b14b_1T",
+      "status": "planned",
+      "requires_env": [
+        "OPENAI_API_KEY",
+        "OPENAI_API_BASE"
+      ],
+      "manifest_ref": null,
+      "notes": "Generic OpenAI-compatible endpoint. Set API key via environment variable."
+    },
+    {
+      "slug": "llama4_scout_17b_16e_cloud",
+      "family": "llama",
+      "architecture": "moe",
+      "provider_format": "openai-compat",
+      "api_base": "[SET_API_BASE_URL]",
+      "model_name": "Llama-4-Scout-17B-16E-Original",
+      "status": "planned",
+      "requires_env": [
+        "OPENAI_API_KEY",
+        "OPENAI_API_BASE"
+      ],
+      "manifest_ref": null,
+      "notes": "Generic OpenAI-compatible endpoint. Set API key via environment variable."
+    },
+    {
+      "slug": "grin_moe_cloud",
+      "family": "grin",
+      "architecture": "moe",
+      "provider_format": "openai-compat",
+      "api_base": "[SET_API_BASE_URL]",
+      "model_name": "Grin-MoE",
+      "status": "planned",
+      "requires_env": [
+        "OPENAI_API_KEY",
+        "OPENAI_API_BASE"
+      ],
+      "manifest_ref": null,
+      "notes": "Generic OpenAI-compatible endpoint. Set API key via environment variable."
+    },
+    {
+      "slug": "skywork_moe_base_fp8_cloud",
+      "family": "skywork",
+      "architecture": "moe",
+      "provider_format": "openai-compat",
+      "api_base": "[SET_API_BASE_URL]",
+      "model_name": "Skywork-MoE-Base-FP8",
+      "status": "planned",
+      "requires_env": [
+        "OPENAI_API_KEY",
+        "OPENAI_API_BASE"
+      ],
+      "manifest_ref": null,
+      "notes": "Generic OpenAI-compatible endpoint. Set API key via environment variable."
+    },
+    {
+      "slug": "grok_1_cloud",
+      "family": "grok",
+      "architecture": "moe",
+      "provider_format": "openai-compat",
+      "api_base": "[SET_API_BASE_URL]",
+      "model_name": "grok-1",
+      "status": "planned",
+      "requires_env": [
+        "OPENAI_API_KEY",
+        "OPENAI_API_BASE"
+      ],
+      "manifest_ref": "grok-1-future-plan-v1",
+      "notes": "Generic OpenAI-compatible endpoint. Set API key via environment variable."
+    },
+    {
+      "slug": "grok_2_cloud",
+      "family": "grok",
+      "architecture": "moe",
+      "provider_format": "openai-compat",
+      "api_base": "[SET_API_BASE_URL]",
+      "model_name": "grok-2",
+      "status": "planned",
+      "requires_env": [
+        "OPENAI_API_KEY",
+        "OPENAI_API_BASE"
+      ],
+      "manifest_ref": null,
+      "notes": "Generic OpenAI-compatible endpoint. Set API key via environment variable."
     }
   ],
   "schema_version": 1

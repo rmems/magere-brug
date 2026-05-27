@@ -1,0 +1,142 @@
+name: Docs Check
+
+on:
+  pull_request:
+    branches: [main]
+
+jobs:
+  docs-hygiene:
+    name: Repo Hygiene Checks
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Check required files exist
+        run: |
+          set -e
+          echo "=== Checking required files ==="
+          
+          if [ ! -f README.md ] && [ ! -f README ]; then
+            echo "✗ README.md or README not found"
+            exit 1
+          fi
+          echo "✓ README exists"
+          
+          if [ ! -f docs/ARCHITECTURE.md ]; then
+            echo "✗ docs/ARCHITECTURE.md not found"
+            exit 1
+          fi
+          echo "✓ docs/ARCHITECTURE.md exists"
+          
+          if [ ! -f schemas/model_manifest.schema.json ]; then
+            echo "✗ schemas/model_manifest.schema.json not found"
+            exit 1
+          fi
+          echo "✓ schemas/model_manifest.schema.json exists"
+
+      - name: Check for secrets in cloud stubs
+        run: |
+          set -e
+          echo "=== Checking for secrets in cloud stubs ==="
+          
+          FOUND=0
+          
+          if [ -d configs/models/cloud ]; then
+            shopt -s nullglob
+            stubs=(configs/models/cloud/*.json)
+            if [ ${#stubs[@]} -eq 0 ]; then
+              echo "⚠ No cloud stub files found"
+            fi
+            for stub in "${stubs[@]}"; do
+              # Check for actual secret values (not placeholder markers like [SET_*])
+              if grep -iE "\"(password|secret|token|api_key|apikey|private_key|credential|auth)\"\s*:\s*\"[^\[]" "$stub" 2>/dev/null; then
+                echo "✗ Potential secret found in $stub"
+                FOUND=1
+              fi
+              
+              # Check for bearer tokens or auth headers with real values
+              if grep -iE "(bearer\s+[a-zA-Z0-9_-]{20,}|Authorization:\s*Basic\s+[A-Za-z0-9+/]{20,})" "$stub" 2>/dev/null; then
+                echo "✗ Potential auth token found in $stub"
+                FOUND=1
+              fi
+            done
+          fi
+          
+          if [ $FOUND -eq 1 ]; then
+            echo "✗ Secret check failed. Remove real credentials from cloud stubs."
+            exit 1
+          fi
+          echo "✓ No secrets detected in cloud stubs"
+
+      - name: Check for absolute personal paths
+        run: |
+          set -e
+          echo "=== Checking for absolute personal paths ==="
+          
+          FOUND=0
+          
+          # Check manifests
+          for file in manifests/examples/*.json configs/models/*.json configs/models/cloud/*.json; do
+            if [ -f "$file" ]; then
+              # Check for /home/username/ patterns
+              if grep -E "/home/[^/]+/" "$file" 2>/dev/null; then
+                echo "✗ Absolute home path found in $file"
+                FOUND=1
+              fi
+              
+              # Check for /Users/username/ patterns (macOS)
+              if grep -E "/Users/[^/]+/" "$file" 2>/dev/null; then
+                echo "✗ Absolute macOS path found in $file"
+                FOUND=1
+              fi
+              
+              # Check for C:\\Users\\ patterns (Windows, JSON-escaped)
+              if grep -E "C:\\\\\\\\Users\\\\\\\\" "$file" 2>/dev/null; then
+                echo "✗ Absolute Windows path found in $file"
+                FOUND=1
+              fi
+            fi
+          done
+          
+          # Check Python scripts
+          for file in scripts/*.py; do
+            if [ -f "$file" ]; then
+              if grep -E "/home/[^/]+/" "$file" 2>/dev/null; then
+                echo "✗ Absolute home path found in $file"
+                FOUND=1
+              fi
+            fi
+          done
+          
+          if [ $FOUND -eq 1 ]; then
+            echo "✗ Personal path check failed. Use generic paths like /models/... instead."
+            exit 1
+          fi
+          echo "✓ No absolute personal paths found"
+
+      - name: Check schema JSON validity
+        run: |
+          set -e
+          echo "=== Checking schema JSON validity ==="
+          python3 -c "import json; json.load(open('schemas/model_manifest.schema.json'))"
+          echo "✓ Schema JSON is valid"
+
+      - name: Check manifest JSON validity
+        run: |
+          set -e
+          echo "=== Checking manifest JSON validity ==="
+          if [ ! -d manifests/examples ]; then
+            echo "✗ manifests/examples directory not found"
+            exit 1
+          fi
+          shopt -s nullglob
+          files=(manifests/examples/*.json)
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "✗ No JSON files found in manifests/examples"
+            exit 1
+          fi
+          for manifest in "${files[@]}"; do
+            python3 -c "import json, sys; json.load(open(sys.argv[1]))" "$manifest"
+          done
+          echo "✓ All manifest JSON files are valid"

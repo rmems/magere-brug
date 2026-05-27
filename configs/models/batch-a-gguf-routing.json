@@ -1,0 +1,48 @@
+{
+  "batch": "A",
+  "description": "Local GGUF routing targets for SAAQ experiments",
+  "created_at": "2026-05-26T00:00:00Z",
+  "models": [
+    {
+      "slug": "olmoe_baseline",
+      "family": "olmoe",
+      "architecture": "moe",
+      "source_format": "gguf",
+      "path": "/models/olmoe/OLMoE-1B-7B-0125-Instruct-F16.gguf",
+      "quantization": "f16",
+      "status": "active",
+      "manifest_ref": "olmoe-1b-7b-instruct-v1"
+    },
+    {
+      "slug": "gemma4_26b_a4b_iq4_nl",
+      "family": "gemma",
+      "architecture": "moe",
+      "source_format": "gguf",
+      "path": "/models/gemma/gemma-4-26B-A4B-it-UD-IQ4_NL.gguf",
+      "quantization": "iq4_nl",
+      "status": "active",
+      "manifest_ref": null
+    },
+    {
+      "slug": "deepseek_coder_v2_lite_q6_k_l",
+      "family": "deepseek",
+      "architecture": "moe",
+      "source_format": "gguf",
+      "path": "/models/deepseek/DeepSeek-Coder-V2-Lite-Instruct-q6_k_l.gguf",
+      "quantization": "q6_k_l",
+      "status": "active",
+      "manifest_ref": "deepseek-coder-v2-lite-instruct-v1"
+    },
+    {
+      "slug": "llama_3_2_dark_champion_q5_k_m",
+      "family": "llama_moe",
+      "architecture": "moe",
+      "source_format": "gguf",
+      "path": "/models/llama/Llama-3.2-8X3B-MOE-Dark-Champion-Inst-18.4B-q5_k_m.gguf",
+      "quantization": "q5_k_m",
+      "status": "active",
+      "manifest_ref": null
+    }
+  ],
+  "schema_version": 1
+}

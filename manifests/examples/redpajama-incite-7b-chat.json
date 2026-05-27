@@ -1,0 +1,65 @@
+{
+  "metadata": {
+    "schema_version": 1,
+    "created_at": "2026-05-26T00:00:00Z",
+    "manifest_id": "redpajama-incite-7b-chat-v1",
+    "description": "RedPajama-INCITE-7B-Chat baseline model for AWQ smoke test"
+  },
+  "model": {
+    "slug": "redpajama_incite_7b_chat",
+    "name": "RedPajama-INCITE-7B-Chat",
+    "family": "redpajama",
+    "parameter_count": {
+      "active": 7000000000,
+      "total": 7000000000
+    },
+    "architecture": "dense"
+  },
+  "source_artifact": {
+    "format": "safetensors",
+    "path": "/models/redpajama/INCITE-7B-Chat",
+    "source_url": "https://huggingface.co/togethercomputer/RedPajama-INCITE-7B-Chat",
+    "dtype_summary": "bf16",
+    "size_bytes": 14000000000,
+    "shard_info": {
+      "shard_count": 2,
+      "shard_size_bytes": 7000000000,
+      "shard_paths": [
+        "model-00001-of-00002.safetensors",
+        "model-00002-of-00002.safetensors"
+      ]
+    }
+  },
+  "quantization": {
+    "method": "awq",
+    "bits": 4,
+    "group_size": 128,
+    "calibration_dataset": "wikitext-2",
+    "calibration_config_path": "/configs/quantization/awq_redpajama_wikitext.json"
+  },
+  "backend_compatibility": {
+    "safetensors": {
+      "supported": true,
+      "status": "proven"
+    },
+    "awq": {
+      "supported": true,
+      "status": "planned"
+    },
+    "gguf": {
+      "supported": true,
+      "status": "planned"
+    },
+    "gptq": {
+      "supported": false,
+      "status": "not_applicable"
+    }
+  },
+  "saaq_experiment": {
+    "saaq_version": "saaq_v1_5",
+    "telemetry_source": "csv_telemetry"
+  },
+  "benchmark_linkage": {
+    "status": "pending"
+  }
+}

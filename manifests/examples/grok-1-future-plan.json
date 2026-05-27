@@ -1,0 +1,71 @@
+{
+  "metadata": {
+    "schema_version": 1,
+    "created_at": "2026-05-26T00:00:00Z",
+    "manifest_id": "grok-1-future-plan-v1",
+    "description": "Grok-1 future planning entry. Source-only, no execution. Managed by grok-ozempic + xai-dissect."
+  },
+  "model": {
+    "slug": "grok_1_future",
+    "name": "Grok-1",
+    "family": "grok",
+    "parameter_count": {
+      "active": 314000000000,
+      "total": 314000000000
+    },
+    "architecture": "moe",
+    "moe_layout": {
+      "expert_count": 256,
+      "capacity_factor": 1.0,
+      "routing_strategy": "expert_choice"
+    }
+  },
+  "source_artifact": {
+    "format": "local_dir",
+    "path": "/models/grok/grok-1-checkpoint",
+    "source_url": "xai-org/grok-1",
+    "dtype_summary": "mixed",
+    "size_bytes": 600000000000
+  },
+  "generated_artifact": {
+    "format": "ternary",
+    "status": "planned"
+  },
+  "quantization": {
+    "method": "ternary",
+    "bits": 2,
+    "calibration_dataset": "reasoning-1m",
+    "calibration_config_path": "/configs/quantization/ternary_grok1_reasoning.json"
+  },
+  "backend_compatibility": {
+    "safetensors": {
+      "supported": false,
+      "status": "not_applicable"
+    },
+    "gguf": {
+      "supported": false,
+      "status": "not_applicable"
+    },
+    "awq": {
+      "supported": false,
+      "status": "not_applicable"
+    },
+    "gptq": {
+      "supported": false,
+      "status": "not_applicable"
+    },
+    "myelin_accelerator": {
+      "supported": true,
+      "status": "planned",
+      "kernel_types": ["ternary", "binary", "saaq"]
+    }
+  },
+  "saaq_experiment": {
+    "saaq_version": "saaq_v2_0_planning",
+    "telemetry_source": "future_distributed_telemetry"
+  },
+  "benchmark_linkage": {
+    "status": "pending",
+    "pipeline_id": "grok_1_ternary_smoke_test_future"
+  }
+}

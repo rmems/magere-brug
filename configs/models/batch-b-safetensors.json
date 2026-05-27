@@ -1,0 +1,52 @@
+{
+  "batch": "B",
+  "description": "Local safetensors manifest inspection. Router remains GGUF-backed.",
+  "created_at": "2026-05-26T00:00:00Z",
+  "models": [
+    {
+      "slug": "redpajama_incite_7b_chat",
+      "family": "redpajama",
+      "architecture": "dense",
+      "source_format": "safetensors",
+      "shard_count": 2,
+      "dtype": "bf16",
+      "path": "/models/redpajama/INCITE-7B-Chat",
+      "status": "ready",
+      "manifest_ref": "redpajama-incite-7b-chat-v1"
+    },
+    {
+      "slug": "nemotron_3_nano_4b",
+      "family": "nemotron",
+      "architecture": "dense",
+      "source_format": "safetensors",
+      "shard_count": 1,
+      "dtype": "bf16",
+      "path": "/models/nemotron/NVIDIA-Nemotron-3-Nano-4B-BF16",
+      "status": "ready",
+      "manifest_ref": null
+    },
+    {
+      "slug": "granite_3_1_3b_a800m",
+      "family": "granite",
+      "architecture": "moe",
+      "source_format": "safetensors",
+      "shard_count": 2,
+      "dtype": "mixed",
+      "path": "/models/granite/granite-3.1-3b-a800m-base",
+      "status": "ready",
+      "manifest_ref": null
+    },
+    {
+      "slug": "trinity_nano_base",
+      "family": "trinity",
+      "architecture": "moe",
+      "source_format": "safetensors",
+      "shard_count": 7,
+      "dtype": "fp32",
+      "path": "/models/trinity/Trinity-Nano-Base",
+      "status": "ready",
+      "manifest_ref": null
+    }
+  ],
+  "schema_version": 1
+}

@@ -1,0 +1,73 @@
+name: Manifest Validate
+
+on:
+  pull_request:
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  validate-manifests:
+    name: Validate Manifest Examples
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: crates/magere-cli
+
+      - name: Build magere CLI
+        working-directory: crates/magere-cli
+        run: cargo build --release
+
+      - name: Validate manifests/examples/*.json
+        run: |
+          set -e
+          echo "=== Validating manifest examples ==="
+          for manifest in manifests/examples/*.json; do
+            echo "Validating: $manifest"
+            ./crates/magere-cli/target/release/magere validate "$manifest"
+          done
+          echo "✓ All manifest examples validated"
+
+      - name: Validate configs/models/*.json
+        run: |
+          set -e
+          echo "=== Validating model lineup configs ==="
+          python3 scripts/validate_configs.py configs/models/*.json
+          echo "✓ All model lineup configs validated"
+
+      - name: Validate cloud stubs
+        run: |
+          set -e
+          echo "=== Validating cloud stubs ==="
+          if [ -d configs/models/cloud ]; then
+            for stub in configs/models/cloud/*.json; do
+              echo "Checking: $stub"
+              python3 scripts/validate_configs.py "$stub"
+            done
+            echo "✓ All cloud stubs validated"
+          else
+            echo "No cloud stubs directory found"
+          fi
+
+      - name: Check required fields in all manifests
+        run: |
+          set -e
+          echo "=== Checking required fields ==="
+          python3 scripts/check_required_fields.py manifests/examples/*.json
+          echo "✓ Required fields check passed"
+
+      - name: Check artifact shape
+        run: |
+          set -e
+          echo "=== Checking artifact shape ==="
+          python3 scripts/check_artifact_shape.py manifests/examples/*.json
+          echo "✓ Artifact shape check passed"

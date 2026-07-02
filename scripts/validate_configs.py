@@ -33,8 +33,9 @@ try:
     # family enum is under properties.model.properties.family.enum
     family_def = schema.get("properties", {}).get("model", {}).get("properties", {}).get("family", {})
     VALID_FAMILIES = set(family_def.get("enum", []))
-except Exception:
-    pass  # Will skip family validation if schema can't be loaded
+except (FileNotFoundError, json.JSONDecodeError, KeyError):
+    # Schema file missing or malformed — family validation will be skipped
+    VALID_FAMILIES = set()
 
 
 def validate_config(path: str) -> list[str]:

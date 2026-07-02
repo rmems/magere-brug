@@ -101,12 +101,11 @@ def validate_config(path: str) -> list[str]:
                 errors.append(
                     f"{path}: Cloud stub should have stub=true"
                 )
-            # Local providers don't need secrets; cloud providers do
-            provider = config.get("provider", "")
-            is_local = isinstance(provider, str) and "local" in provider.lower()
-            if not is_local and config.get("requires_secrets") is not True:
+            # Disabled documentation-only stubs don't need secrets
+            is_stub = config.get("status") == "stub" and config.get("enabled") is False
+            if not is_stub and config.get("requires_secrets") is not True:
                 errors.append(
-                    f"{path}: Cloud stub should require secrets (requires_secrets=true)"
+                    f"{path}: Active cloud stub should require secrets (requires_secrets=true)"
                 )
 
     return errors

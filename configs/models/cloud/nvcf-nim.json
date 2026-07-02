@@ -2,7 +2,7 @@
   "stub": true,
   "status": "stub",
   "enabled": false,
-  "requires_secrets": true,
+  "requires_secrets": false,
   "provider": "nvcf-nim",
   "description": "NVIDIA NIM (NeMo Inference Microservice) cloud backend stubs",
   "created_at": "2026-05-26T00:00:00Z",

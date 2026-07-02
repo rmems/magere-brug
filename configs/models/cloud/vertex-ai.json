@@ -2,7 +2,7 @@
   "stub": true,
   "status": "stub",
   "enabled": false,
-  "requires_secrets": true,
+  "requires_secrets": false,
   "provider": "vertex-ai",
   "description": "Google Cloud Vertex AI model backend stubs",
   "created_at": "2026-05-26T00:00:00Z",

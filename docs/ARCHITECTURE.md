@@ -174,6 +174,15 @@ Local safetensors models for header inspection and manifest generation. Router p
 - `granite_3_1_3b_a800m` — IBM Granite MoE model
 - `trinity_nano_base` — Arcee Trinity MoE model
 
+### Batch B-local: Local Directory Checkpoints
+
+**File:** `configs/models/batch-b-local-dir.json`
+
+Local directory (non-safetensors) checkpoint models for inspection and routing experiments. These entries use `source_format: "local_dir"` and include `shard_count` and `dtype` fields:
+
+- `phi_tiny_moe_instruct` — Microsoft Phi-tiny MoE instruct checkpoint (BF16, 2 shards)
+- `moonlight_16b_a3b_bnb4bit` — Moonlight-16B-A3B BNB 4-bit quantized checkpoint
+
 ### Batch C: Cloud Model Metadata Stubs
 
 **Directory:** `configs/models/cloud/`

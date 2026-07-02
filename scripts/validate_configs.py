@@ -10,7 +10,9 @@ Checks:
     - JSON is valid
     - Required top-level fields exist
     - Models array has required fields per entry
+    - family values match schema enum
     - Cloud stubs have security flags (stub, enabled, requires_secrets)
+    - Active cloud configs require secrets
 """
 
 import json
@@ -21,6 +23,18 @@ REQUIRED_TOP_LEVEL = {"schema_version", "created_at", "models"}
 REQUIRED_MODEL_FIELDS = {"slug", "family", "architecture"}
 CLOUD_STUB_REQUIRED = {"stub", "status", "enabled", "requires_secrets"}
 VALID_ARCHITECTURES = {"dense", "moe"}
+
+# Load family enum from schema
+SCHEMA_PATH = Path(__file__).parent.parent / "schemas" / "model_manifest.schema.json"
+VALID_FAMILIES = set()
+try:
+    with open(SCHEMA_PATH, "r") as f:
+        schema = json.load(f)
+    # family enum is under properties.model.properties.family.enum
+    family_def = schema.get("properties", {}).get("model", {}).get("properties", {}).get("family", {})
+    VALID_FAMILIES = set(family_def.get("enum", []))
+except Exception:
+    pass  # Will skip family validation if schema can't be loaded
 
 
 def validate_config(path: str) -> list[str]:
@@ -85,6 +99,12 @@ def validate_config(path: str) -> list[str]:
                 f"{path}: models[{idx}].architecture must be one of {VALID_ARCHITECTURES}"
             )
 
+        family = model.get("family")
+        if VALID_FAMILIES and isinstance(family, str) and family not in VALID_FAMILIES:
+            errors.append(
+                f"{path}: models[{idx}].family '{family}' not in schema enum"
+            )
+
     # Cloud stub security check
     if "cloud" in path.lower():
         missing_stub = CLOUD_STUB_REQUIRED - set(config.keys())
@@ -101,12 +121,23 @@ def validate_config(path: str) -> list[str]:
                 errors.append(
                     f"{path}: Cloud stub should have stub=true"
                 )
-            # Disabled documentation-only stubs don't need secrets
-            is_stub = config.get("status") == "stub" and config.get("enabled") is False
-            if not is_stub and config.get("requires_secrets") is not True:
-                errors.append(
-                    f"{path}: Active cloud stub should require secrets (requires_secrets=true)"
-                )
+
+            is_disabled_stub = (
+                config.get("status") == "stub" and config.get("enabled") is False
+            )
+
+            if is_disabled_stub:
+                # Disabled stubs must NOT claim to require secrets
+                if config.get("requires_secrets") is True:
+                    errors.append(
+                        f"{path}: Disabled stub should not require secrets (requires_secrets=false)"
+                    )
+            else:
+                # Any active or non-stub cloud config MUST require secrets
+                if config.get("requires_secrets") is not True:
+                    errors.append(
+                        f"{path}: Active cloud config must require secrets (requires_secrets=true)"
+                    )
 
     return errors
 

@@ -15,9 +15,12 @@
       "api_base": "[SET_API_BASE_URL]",
       "model_name": "glm-4.6v-flash",
       "status": "planned",
-      "requires_env": [],
+      "requires_env": [
+        "OPENAI_API_KEY",
+        "OPENAI_API_BASE"
+      ],
       "manifest_ref": null,
-      "notes": "Documentation-only stub. No API credentials required. Model runs locally via downloaded weights."
+      "notes": "Documentation-only stub (disabled). If activated, this cloud provider requires API credentials. Set via environment variables only."
     },
     {
       "slug": "kimi_vl_a3b_cloud",
@@ -27,9 +30,12 @@
       "api_base": "[SET_API_BASE_URL]",
       "model_name": "kimi-vl-a3b-instruct",
       "status": "planned",
-      "requires_env": [],
+      "requires_env": [
+        "OPENAI_API_KEY",
+        "OPENAI_API_BASE"
+      ],
       "manifest_ref": null,
-      "notes": "Documentation-only stub. No API credentials required. Model runs locally via downloaded weights."
+      "notes": "Documentation-only stub (disabled). If activated, this cloud provider requires API credentials. Set via environment variables only."
     },
     {
       "slug": "zaya1_8b_cloud",
@@ -39,9 +45,12 @@
       "api_base": "[SET_API_BASE_URL]",
       "model_name": "zaya1-reasoning",
       "status": "planned",
-      "requires_env": [],
+      "requires_env": [
+        "OPENAI_API_KEY",
+        "OPENAI_API_BASE"
+      ],
       "manifest_ref": null,
-      "notes": "Documentation-only stub. No API credentials required. Model runs locally via downloaded weights."
+      "notes": "Documentation-only stub (disabled). If activated, this cloud provider requires API credentials. Set via environment variables only."
     },
     {
       "slug": "glm_4_7_flash_cloud",
@@ -51,9 +60,12 @@
       "api_base": "[SET_API_BASE_URL]",
       "model_name": "GLM-4.7-Flash",
       "status": "planned",
-      "requires_env": [],
+      "requires_env": [
+        "OPENAI_API_KEY",
+        "OPENAI_API_BASE"
+      ],
       "manifest_ref": null,
-      "notes": "Documentation-only stub. No API credentials required. Model runs locally via downloaded weights."
+      "notes": "Documentation-only stub (disabled). If activated, this cloud provider requires API credentials. Set via environment variables only."
     },
     {
       "slug": "deepseek_v4_flash_cloud",
@@ -63,9 +75,12 @@
       "api_base": "[SET_API_BASE_URL]",
       "model_name": "DeepSeek-V4-Flash",
       "status": "planned",
-      "requires_env": [],
+      "requires_env": [
+        "OPENAI_API_KEY",
+        "OPENAI_API_BASE"
+      ],
       "manifest_ref": null,
-      "notes": "Documentation-only stub. No API credentials required. Model runs locally via downloaded weights."
+      "notes": "Documentation-only stub (disabled). If activated, this cloud provider requires API credentials. Set via environment variables only."
     },
     {
       "slug": "gpt_oss_120b_cloud",
@@ -75,9 +90,12 @@
       "api_base": "[SET_API_BASE_URL]",
       "model_name": "gpt-oss-120b",
       "status": "planned",
-      "requires_env": [],
+      "requires_env": [
+        "OPENAI_API_KEY",
+        "OPENAI_API_BASE"
+      ],
       "manifest_ref": null,
-      "notes": "Documentation-only stub. No API credentials required. Model runs locally via downloaded weights."
+      "notes": "Documentation-only stub (disabled). If activated, this cloud provider requires API credentials. Set via environment variables only."
     },
     {
       "slug": "step_3_5_flash_cloud",
@@ -87,9 +105,12 @@
       "api_base": "[SET_API_BASE_URL]",
       "model_name": "Step-3.5-Flash",
       "status": "planned",
-      "requires_env": [],
+      "requires_env": [
+        "OPENAI_API_KEY",
+        "OPENAI_API_BASE"
+      ],
       "manifest_ref": null,
-      "notes": "Documentation-only stub. No API credentials required. Model runs locally via downloaded weights."
+      "notes": "Documentation-only stub (disabled). If activated, this cloud provider requires API credentials. Set via environment variables only."
     },
     {
       "slug": "minimax_m2_7_cloud",
@@ -99,9 +120,12 @@
       "api_base": "[SET_API_BASE_URL]",
       "model_name": "MiniMax-M2.7",
       "status": "planned",
-      "requires_env": [],
+      "requires_env": [
+        "OPENAI_API_KEY",
+        "OPENAI_API_BASE"
+      ],
       "manifest_ref": null,
-      "notes": "Documentation-only stub. No API credentials required. Model runs locally via downloaded weights."
+      "notes": "Documentation-only stub (disabled). If activated, this cloud provider requires API credentials. Set via environment variables only."
     },
     {
       "slug": "command_a_plus_05_2026_cloud",
@@ -111,9 +135,12 @@
       "api_base": "[SET_API_BASE_URL]",
       "model_name": "command-a-plus-05-2026-bf16",
       "status": "planned",
-      "requires_env": [],
+      "requires_env": [
+        "OPENAI_API_KEY",
+        "OPENAI_API_BASE"
+      ],
       "manifest_ref": null,
-      "notes": "Documentation-only stub. No API credentials required. Model runs locally via downloaded weights."
+      "notes": "Documentation-only stub (disabled). If activated, this cloud provider requires API credentials. Set via environment variables only."
     },
     {
       "slug": "qwen3_6_35b_a3b_cloud",
@@ -123,9 +150,12 @@
       "api_base": "[SET_API_BASE_URL]",
       "model_name": "Qwen3.6-35B-A3B",
       "status": "planned",
-      "requires_env": [],
+      "requires_env": [
+        "OPENAI_API_KEY",
+        "OPENAI_API_BASE"
+      ],
       "manifest_ref": null,
-      "notes": "Documentation-only stub. No API credentials required. Model runs locally via downloaded weights."
+      "notes": "Documentation-only stub (disabled). If activated, this cloud provider requires API credentials. Set via environment variables only."
     },
     {
       "slug": "emo_1b14b_1t_cloud",
@@ -135,9 +165,12 @@
       "api_base": "[SET_API_BASE_URL]",
       "model_name": "Emo_1b14b_1T",
       "status": "planned",
-      "requires_env": [],
+      "requires_env": [
+        "OPENAI_API_KEY",
+        "OPENAI_API_BASE"
+      ],
       "manifest_ref": null,
-      "notes": "Documentation-only stub. No API credentials required. Model runs locally via downloaded weights."
+      "notes": "Documentation-only stub (disabled). If activated, this cloud provider requires API credentials. Set via environment variables only."
     },
     {
       "slug": "llama4_scout_17b_16e_cloud",
@@ -147,9 +180,12 @@
       "api_base": "[SET_API_BASE_URL]",
       "model_name": "Llama-4-Scout-17B-16E-Original",
       "status": "planned",
-      "requires_env": [],
+      "requires_env": [
+        "OPENAI_API_KEY",
+        "OPENAI_API_BASE"
+      ],
       "manifest_ref": null,
-      "notes": "Documentation-only stub. No API credentials required. Model runs locally via downloaded weights."
+      "notes": "Documentation-only stub (disabled). If activated, this cloud provider requires API credentials. Set via environment variables only."
     },
     {
       "slug": "grin_moe_cloud",
@@ -159,9 +195,12 @@
       "api_base": "[SET_API_BASE_URL]",
       "model_name": "Grin-MoE",
       "status": "planned",
-      "requires_env": [],
+      "requires_env": [
+        "OPENAI_API_KEY",
+        "OPENAI_API_BASE"
+      ],
       "manifest_ref": null,
-      "notes": "Documentation-only stub. No API credentials required. Model runs locally via downloaded weights."
+      "notes": "Documentation-only stub (disabled). If activated, this cloud provider requires API credentials. Set via environment variables only."
     },
     {
       "slug": "skywork_moe_base_fp8_cloud",
@@ -171,9 +210,12 @@
       "api_base": "[SET_API_BASE_URL]",
       "model_name": "Skywork-MoE-Base-FP8",
       "status": "planned",
-      "requires_env": [],
+      "requires_env": [
+        "OPENAI_API_KEY",
+        "OPENAI_API_BASE"
+      ],
       "manifest_ref": null,
-      "notes": "Documentation-only stub. No API credentials required. Model runs locally via downloaded weights."
+      "notes": "Documentation-only stub (disabled). If activated, this cloud provider requires API credentials. Set via environment variables only."
     },
     {
       "slug": "grok_1_cloud",
@@ -183,9 +225,12 @@
       "api_base": "[SET_API_BASE_URL]",
       "model_name": "grok-1",
       "status": "planned",
-      "requires_env": [],
-      "manifest_ref": null,
-      "notes": "Documentation-only stub. No API credentials required. Model runs locally via downloaded weights."
+      "requires_env": [
+        "OPENAI_API_KEY",
+        "OPENAI_API_BASE"
+      ],
+      "manifest_ref": "grok-1-future-plan-v1",
+      "notes": "Documentation-only stub (disabled). If activated, this cloud provider requires API credentials. Set via environment variables only."
     },
     {
       "slug": "grok_2_cloud",
@@ -195,9 +240,12 @@
       "api_base": "[SET_API_BASE_URL]",
       "model_name": "grok-2",
       "status": "planned",
-      "requires_env": [],
+      "requires_env": [
+        "OPENAI_API_KEY",
+        "OPENAI_API_BASE"
+      ],
       "manifest_ref": null,
-      "notes": "Documentation-only stub. No API credentials required. Model runs locally via downloaded weights."
+      "notes": "Documentation-only stub (disabled). If activated, this cloud provider requires API credentials. Set via environment variables only."
     }
   ],
   "schema_version": 1

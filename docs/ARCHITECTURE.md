@@ -198,9 +198,11 @@ Cloud provider stubs with **no real credentials, endpoints, or keys**. All stubs
   "stub": true,
   "status": "stub",
   "enabled": false,
-  "requires_secrets": true
+  "requires_secrets": false
 }
 ```
+
+> **Note:** Active (non-stub) cloud configs must set `"requires_secrets": true`.
 
 **Files:**
 

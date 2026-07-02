@@ -15,9 +15,12 @@
       "model_endpoint": "[SET_VERTEX_ENDPOINT_ID]",
       "project_id": "[SET_GCP_PROJECT_ID]",
       "status": "planned",
-      "requires_env": [],
+      "requires_env": [
+        "GOOGLE_APPLICATION_CREDENTIALS",
+        "GCP_PROJECT_ID"
+      ],
       "manifest_ref": null,
-      "notes": "Documentation-only stub. No API credentials required. Model runs locally via downloaded weights."
+      "notes": "Documentation-only stub (disabled). If activated, this cloud provider requires API credentials. Set via environment variables only."
     }
   ],
   "schema_version": 1

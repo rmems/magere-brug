@@ -64,6 +64,7 @@
             "gemma",
             "deepseek",
             "llama",
+            "llama_moe",
             "qwen",
             "nemotron",
             "redpajama",

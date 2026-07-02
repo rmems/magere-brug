@@ -162,6 +162,10 @@ Models loadable locally via GGUF format for SAAQ latent calibration runs:
 - `gemma4_26b_a4b_iq4_nl` — Gemma-4 MoE model
 - `deepseek_coder_v2_lite_q6_k_l` — DeepSeek-Coder-V2-Lite MoE model
 - `llama_3_2_dark_champion_q5_k_m` — Llama MoE variant
+- `zaya1_8b_q8_0` — Zaya-1 dense model
+- `glm_4_6v_flash_q8_0` — GLM-4.6V-Flash dense model
+- `kimi_vl_a3b_q6_k` — Kimi-VL-A3B MoE model
+- `marco_nano_base_q8_0` — Marco-Nano-Base dense model
 
 ### Batch B: Local Safetensors Manifest Inspection
 

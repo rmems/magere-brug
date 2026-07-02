@@ -143,8 +143,12 @@ def validate_config(path: str) -> list[str]:
                         f"{path}: Disabled stub should not require secrets (requires_secrets=false)"
                     )
             else:
-                # Any active or non-stub cloud config MUST require secrets
-                if config.get("requires_secrets") is not True:
+                # Active or non-stub cloud configs MUST require secrets, except
+                # local providers (local-llamacpp, local-vllm) which run on
+                # the same machine and don't need external API credentials.
+                provider = config.get("provider", "")
+                is_local = isinstance(provider, str) and "local" in provider.lower()
+                if not is_local and config.get("requires_secrets") is not True:
                     errors.append(
                         f"{path}: Active cloud config must require secrets (requires_secrets=true)"
                     )

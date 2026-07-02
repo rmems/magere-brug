@@ -1052,6 +1052,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "magere-corinth-core"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "thiserror",
+]
+
+[[package]]
 name = "memchr"
 version = "2.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"

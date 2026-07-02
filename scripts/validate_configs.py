@@ -33,8 +33,9 @@ try:
     # family enum is under properties.model.properties.family.enum
     family_def = schema.get("properties", {}).get("model", {}).get("properties", {}).get("family", {})
     VALID_FAMILIES = set(family_def.get("enum", []))
-except (FileNotFoundError, json.JSONDecodeError, KeyError):
+except (FileNotFoundError, json.JSONDecodeError, KeyError) as e:
     # Schema file missing or malformed — family validation will be skipped
+    print(f"⚠ Warning: Could not load schema family enum from {SCHEMA_PATH}: {e}")
     VALID_FAMILIES = set()
 
 
@@ -123,8 +124,16 @@ def validate_config(path: str) -> list[str]:
                     f"{path}: Cloud stub should have stub=true"
                 )
 
+            # Semantics: requires_secrets reflects the config's CURRENT operational
+            # state, not the provider's inherent credential requirements. Disabled
+            # documentation-only stubs (enabled=false, status=stub) MUST have
+            # requires_secrets=false. Active or non-stub cloud configs MUST have
+            # requires_secrets=true. This prevents disabled stubs from triggering
+            # false-positive credential checks in downstream tooling.
             is_disabled_stub = (
-                config.get("status") == "stub" and config.get("enabled") is False
+                config.get("stub") is True
+                and config.get("status") == "stub"
+                and config.get("enabled") is False
             )
 
             if is_disabled_stub:

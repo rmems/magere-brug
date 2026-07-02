@@ -14,12 +14,9 @@
       "provider_format": "nvcf-nim",
       "model_id": "[SET_NVCF_MODEL_ID]",
       "status": "planned",
-      "requires_env": [
-        "NVCF_API_KEY",
-        "NVCF_FUNCTION_ID"
-      ],
+      "requires_env": [],
       "manifest_ref": null,
-      "notes": "Do not expose API keys. Set via environment variables only."
+      "notes": "Documentation-only stub. No API credentials required. Model runs locally via downloaded weights."
     },
     {
       "slug": "nemotron_3_nano_8b_cloud",
@@ -28,12 +25,9 @@
       "provider_format": "nvcf-nim",
       "model_id": "[SET_NVCF_MODEL_ID]",
       "status": "planned",
-      "requires_env": [
-        "NVCF_API_KEY",
-        "NVCF_FUNCTION_ID"
-      ],
+      "requires_env": [],
       "manifest_ref": null,
-      "notes": "Do not expose API keys. Set via environment variables only."
+      "notes": "Documentation-only stub. No API credentials required. Model runs locally via downloaded weights."
     },
     {
       "slug": "trinity_nano_base_cloud",
@@ -42,12 +36,9 @@
       "provider_format": "nvcf-nim",
       "model_id": "[SET_NVCF_MODEL_ID]",
       "status": "planned",
-      "requires_env": [
-        "NVCF_API_KEY",
-        "NVCF_FUNCTION_ID"
-      ],
+      "requires_env": [],
       "manifest_ref": null,
-      "notes": "Do not expose API keys. Set via environment variables only."
+      "notes": "Documentation-only stub. No API credentials required. Model runs locally via downloaded weights."
     }
   ],
   "schema_version": 1

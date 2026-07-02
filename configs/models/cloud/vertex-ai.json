@@ -15,12 +15,9 @@
       "model_endpoint": "[SET_VERTEX_ENDPOINT_ID]",
       "project_id": "[SET_GCP_PROJECT_ID]",
       "status": "planned",
-      "requires_env": [
-        "GOOGLE_APPLICATION_CREDENTIALS",
-        "GCP_PROJECT_ID"
-      ],
+      "requires_env": [],
       "manifest_ref": null,
-      "notes": "Use service account credentials. Do not expose project IDs or endpoint IDs in PR."
+      "notes": "Documentation-only stub. No API credentials required. Model runs locally via downloaded weights."
     }
   ],
   "schema_version": 1

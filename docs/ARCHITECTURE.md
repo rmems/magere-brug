@@ -160,8 +160,12 @@ Models loadable locally via GGUF format for SAAQ latent calibration runs:
 
 - `olmoe_baseline` — OLMoE MoE baseline
 - `gemma4_26b_a4b_iq4_nl` — Gemma-4 MoE model
-- `deepseek_coder_v2_lite_q6_k_l` — DeepSeek code model
+- `deepseek_coder_v2_lite_q6_k_l` — DeepSeek-Coder-V2-Lite MoE model
 - `llama_3_2_dark_champion_q5_k_m` — Llama MoE variant
+- `zaya1_8b_q8_0` — Zaya-1 dense model
+- `glm_4_6v_flash_q8_0` — GLM-4.6V-Flash dense model
+- `kimi_vl_a3b_q6_k` — Kimi-VL-A3B MoE model
+- `marco_nano_base_q8_0` — Marco-Nano-Base dense model
 
 ### Batch B: Local Safetensors Manifest Inspection
 
@@ -174,6 +178,15 @@ Local safetensors models for header inspection and manifest generation. Router p
 - `granite_3_1_3b_a800m` — IBM Granite MoE model
 - `trinity_nano_base` — Arcee Trinity MoE model
 
+### Batch B-local: Local Directory Checkpoints
+
+**File:** `configs/models/batch-b-local-dir.json`
+
+Local directory (non-safetensors) checkpoint models for inspection and routing experiments. These entries use `source_format: "local_dir"` and include `shard_count` and `dtype` fields:
+
+- `phi_tiny_moe_instruct` — Microsoft Phi-tiny MoE instruct checkpoint (BF16, 2 shards)
+- `moonlight_16b_a3b_bnb4bit` — Moonlight-16B-A3B BNB 4-bit quantized checkpoint
+
 ### Batch C: Cloud Model Metadata Stubs
 
 **Directory:** `configs/models/cloud/`
@@ -185,9 +198,11 @@ Cloud provider stubs with **no real credentials, endpoints, or keys**. All stubs
   "stub": true,
   "status": "stub",
   "enabled": false,
-  "requires_secrets": true
+  "requires_secrets": false
 }
 ```
+
+> **Note:** Active (non-stub) cloud configs must set `"requires_secrets": true`.
 
 **Files:**
 
@@ -229,11 +244,11 @@ Located in `manifests/examples/`:
 
 ### 3. deepseek-coder-v2-lite.json
 
-**Purpose:** Code quantization model
+**Purpose:** DeepSeek-Coder-V2-Lite quantization model
 
 - Format: GGUF (Q6_K variant)
-- Architecture: Dense
-- Parameters: 16B
+- Architecture: MoE (64 experts, top-6 routing)
+- Parameters: 16B total / 2.4B active
 - Quantization: GGUF Q6_K (existing)
 - Backend: GGUF proven, safetensors/AWQ/GPTQ planned
 - Use Case: Code model quantization track

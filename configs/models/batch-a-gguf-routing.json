@@ -42,6 +42,46 @@
       "quantization": "q5_k_m",
       "status": "active",
       "manifest_ref": null
+    },
+    {
+      "slug": "zaya1_8b_q8_0",
+      "family": "zaya",
+      "architecture": "dense",
+      "source_format": "gguf",
+      "path": "/models/zaya/ZAYA1-8B-Q8_0.gguf",
+      "quantization": "q8_0",
+      "status": "planned",
+      "manifest_ref": null
+    },
+    {
+      "slug": "glm_4_6v_flash_q8_0",
+      "family": "glm",
+      "architecture": "dense",
+      "source_format": "gguf",
+      "path": "/models/glm/GLM-4.6V-Flash-Q8_0.gguf",
+      "quantization": "q8_0",
+      "status": "planned",
+      "manifest_ref": null
+    },
+    {
+      "slug": "kimi_vl_a3b_q6_k",
+      "family": "kimi",
+      "architecture": "moe",
+      "source_format": "gguf",
+      "path": "/models/kimi/Kimi-VL-A3B-Instruct-Q6_K.gguf",
+      "quantization": "q6_k",
+      "status": "planned",
+      "manifest_ref": null
+    },
+    {
+      "slug": "marco_nano_base_q8_0",
+      "family": "marco",
+      "architecture": "dense",
+      "source_format": "gguf",
+      "path": "/models/marco/Marco-Nano-Base-Q8_0.gguf",
+      "quantization": "q8_0",
+      "status": "planned",
+      "manifest_ref": null
     }
   ],
   "schema_version": 1

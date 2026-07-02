@@ -23,7 +23,7 @@
     {
       "slug": "deepseek_coder_llamacpp",
       "family": "deepseek",
-      "architecture": "dense",
+      "architecture": "moe",
       "provider_format": "llamacpp",
       "model_id": "deepseek_coder_v2_lite_q6_k_l",
       "gguf_path": "/models/deepseek/DeepSeek-Coder-V2-Lite-Instruct-q6_k_l.gguf",

@@ -2,7 +2,7 @@
   "stub": true,
   "status": "stub",
   "enabled": false,
-  "requires_secrets": true,
+  "requires_secrets": false,
   "provider": "vertex-ai",
   "description": "Google Cloud Vertex AI model backend stubs",
   "created_at": "2026-05-26T00:00:00Z",
@@ -20,7 +20,7 @@
         "GCP_PROJECT_ID"
       ],
       "manifest_ref": null,
-      "notes": "Use service account credentials. Do not expose project IDs or endpoint IDs in PR."
+      "notes": "Documentation-only stub (disabled). If activated, this cloud provider requires API credentials. Set via environment variables only."
     }
   ],
   "schema_version": 1

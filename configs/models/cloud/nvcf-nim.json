@@ -2,7 +2,7 @@
   "stub": true,
   "status": "stub",
   "enabled": false,
-  "requires_secrets": true,
+  "requires_secrets": false,
   "provider": "nvcf-nim",
   "description": "NVIDIA NIM (NeMo Inference Microservice) cloud backend stubs",
   "created_at": "2026-05-26T00:00:00Z",
@@ -19,7 +19,7 @@
         "NVCF_FUNCTION_ID"
       ],
       "manifest_ref": null,
-      "notes": "Do not expose API keys. Set via environment variables only."
+      "notes": "Documentation-only stub (disabled). If activated, this cloud provider requires API credentials. Set via environment variables only."
     },
     {
       "slug": "nemotron_3_nano_8b_cloud",
@@ -33,7 +33,7 @@
         "NVCF_FUNCTION_ID"
       ],
       "manifest_ref": null,
-      "notes": "Do not expose API keys. Set via environment variables only."
+      "notes": "Documentation-only stub (disabled). If activated, this cloud provider requires API credentials. Set via environment variables only."
     },
     {
       "slug": "trinity_nano_base_cloud",
@@ -47,7 +47,7 @@
         "NVCF_FUNCTION_ID"
       ],
       "manifest_ref": null,
-      "notes": "Do not expose API keys. Set via environment variables only."
+      "notes": "Documentation-only stub (disabled). If activated, this cloud provider requires API credentials. Set via environment variables only."
     }
   ],
   "schema_version": 1

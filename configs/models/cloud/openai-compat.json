@@ -55,7 +55,7 @@
     {
       "slug": "glm_4_7_flash_cloud",
       "family": "glm",
-      "architecture": "dense",
+      "architecture": "moe",
       "provider_format": "openai-compat",
       "api_base": "[SET_API_BASE_URL]",
       "model_name": "GLM-4.7-Flash",

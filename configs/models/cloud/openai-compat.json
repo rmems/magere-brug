@@ -53,7 +53,7 @@
       "notes": "Generic OpenAI-compatible endpoint. Set API key via environment variable."
     },
     {
-      "slug": "glm47_flash_cloud",
+      "slug": "glm_4_7_flash_cloud",
       "family": "glm",
       "architecture": "moe",
       "provider_format": "openai-compat",

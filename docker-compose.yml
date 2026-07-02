@@ -1,0 +1,31 @@
+services:
+  # Run Rust CLI manifest validation
+  validate-manifests:
+    build:
+      context: .
+      target: runtime
+    command: ["validate", "manifests/examples/deepseek-coder-v2-lite.json"]
+    volumes:
+      - ./manifests:/app/manifests:ro
+
+  # Run Python config validation
+  validate-configs:
+    build:
+      context: .
+      target: runtime
+    entrypoint: ["python3"]
+    command: ["scripts/validate_configs.py", "configs/models/batch-a-gguf-routing.json"]
+    volumes:
+      - ./configs:/app/configs:ro
+      - ./schemas:/app/schemas:ro
+
+  # Interactive shell for development
+  shell:
+    build:
+      context: .
+      target: runtime
+    command: ["bash"]
+    stdin_open: true
+    tty: true
+    volumes:
+      - .:/app

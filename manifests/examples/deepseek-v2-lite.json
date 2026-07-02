@@ -2,23 +2,28 @@
   "metadata": {
     "schema_version": 1,
     "created_at": "2026-05-26T00:00:00Z",
-    "manifest_id": "deepseek-coder-v2-lite-instruct-v1",
-    "description": "DeepSeek Coder V2 Lite for code model quantization and routing experiments"
+    "manifest_id": "deepseek-v2-lite-instruct-v1",
+    "description": "DeepSeek-V2-Lite for code model quantization and routing experiments"
   },
   "model": {
-    "slug": "deepseek_coder_v2_lite",
-    "name": "DeepSeek-Coder-V2-Lite-Instruct",
+    "slug": "deepseek_v2_lite",
+    "name": "DeepSeek-V2-Lite-Instruct",
     "family": "deepseek",
     "parameter_count": {
-      "active": 16000000000,
+      "active": 2400000000,
       "total": 16000000000
     },
-    "architecture": "moe"
+    "architecture": "moe",
+    "moe_layout": {
+      "expert_count": 64,
+      "capacity_factor": 1.0,
+      "routing_strategy": "top-6"
+    }
   },
   "source_artifact": {
     "format": "gguf",
-    "path": "/models/deepseek/DeepSeek-Coder-V2-Lite-Instruct-q6_k_l.gguf",
-    "source_url": "https://huggingface.co/deepseek-ai/DeepSeek-Coder-V2-Lite-Instruct",
+    "path": "/models/deepseek/DeepSeek-V2-Lite-Instruct-q6_k_l.gguf",
+    "source_url": "https://huggingface.co/deepseek-ai/DeepSeek-V2-Lite",
     "checksum": {
       "sha256": "def456789abc123def456789abc123def456789abc123def456789abc123def4"
     },

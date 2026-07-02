@@ -30,7 +30,7 @@
       "api_base": "http://localhost:8080",
       "status": "planned",
       "requires_env": [],
-      "manifest_ref": "deepseek-coder-v2-lite-instruct-v1",
+      "manifest_ref": "deepseek-v2-lite-instruct-v1",
       "notes": "Start llama.cpp server: ./server -m /models/deepseek/... -ngl 33"
     }
   ],

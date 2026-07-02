@@ -31,7 +31,7 @@
       "path": "/models/deepseek/DeepSeek-Coder-V2-Lite-Instruct-q6_k_l.gguf",
       "quantization": "q6_k_l",
       "status": "active",
-      "manifest_ref": "deepseek-coder-v2-lite-instruct-v1"
+      "manifest_ref": "deepseek-v2-lite-instruct-v1"
     },
     {
       "slug": "llama_3_2_dark_champion_q5_k_m",
@@ -56,7 +56,7 @@
     {
       "slug": "glm_4_6v_flash_q8_0",
       "family": "glm",
-      "architecture": "moe",
+      "architecture": "dense",
       "source_format": "gguf",
       "path": "/models/glm/GLM-4.6V-Flash-Q8_0.gguf",
       "quantization": "q8_0",

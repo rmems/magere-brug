@@ -160,7 +160,7 @@ Models loadable locally via GGUF format for SAAQ latent calibration runs:
 
 - `olmoe_baseline` — OLMoE MoE baseline
 - `gemma4_26b_a4b_iq4_nl` — Gemma-4 MoE model
-- `deepseek_coder_v2_lite_q6_k_l` — DeepSeek code model
+- `deepseek_v2_lite_q6_k_l` — DeepSeek-V2-Lite MoE model
 - `llama_3_2_dark_champion_q5_k_m` — Llama MoE variant
 
 ### Batch B: Local Safetensors Manifest Inspection
@@ -227,13 +227,13 @@ Located in `manifests/examples/`:
 - Backend Compatibility: GGUF proven, safetensors/AWQ planned
 - Status: Completed benchmark run (olmoe_baseline_csv_re4_control)
 
-### 3. deepseek-coder-v2-lite.json
+### 3. deepseek-v2-lite.json
 
-**Purpose:** Code quantization model
+**Purpose:** DeepSeek-V2-Lite quantization model
 
 - Format: GGUF (Q6_K variant)
-- Architecture: Dense
-- Parameters: 16B
+- Architecture: MoE (64 experts, top-6 routing)
+- Parameters: 16B total / 2.4B active
 - Quantization: GGUF Q6_K (existing)
 - Backend: GGUF proven, safetensors/AWQ/GPTQ planned
 - Use Case: Code model quantization track

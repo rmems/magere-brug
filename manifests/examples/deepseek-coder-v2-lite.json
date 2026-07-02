@@ -13,7 +13,7 @@
       "active": 16000000000,
       "total": 16000000000
     },
-    "architecture": "dense"
+    "architecture": "moe"
   },
   "source_artifact": {
     "format": "gguf",

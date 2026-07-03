@@ -132,7 +132,7 @@ pub fn parse_pack(bytes: &[u8]) -> Option<(PackHeader, Vec<PackTensorEntry>)> {
     }
 
     let magic = [bytes[0], bytes[1], bytes[2], bytes[3]];
-    if &magic != GOZ1_MAGIC {
+    if magic != *GOZ1_MAGIC {
         return None;
     }
 

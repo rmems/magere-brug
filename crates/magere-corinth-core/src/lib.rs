@@ -47,7 +47,6 @@ pub use latent::{
 };
 pub use telemetry::TelemetryEncoder;
 pub use types::{
-    CloudModelSpec, EMBEDDING_DIM, ModelArchitectureClass, ModelFamily, ModelTarget,
-    TelemetrySnapshot, ProjectionMode, RoutingMode, ModelConfig, ModelOutput,
-    CheckpointFormat,
+    CheckpointFormat, CloudModelSpec, EMBEDDING_DIM, ModelArchitectureClass, ModelConfig,
+    ModelFamily, ModelOutput, ModelTarget, ProjectionMode, RoutingMode, TelemetrySnapshot,
 };

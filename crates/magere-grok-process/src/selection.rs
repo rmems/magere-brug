@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Tensor selection — classify tensors into precision tiers.
 
-
 /// Classification of a single tensor.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TensorClass {

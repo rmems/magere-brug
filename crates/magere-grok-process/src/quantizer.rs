@@ -23,8 +23,7 @@ pub fn quantize_ternary(data: &[f32], gif_threshold: f32) -> Vec<i8> {
     let rms = (data.iter().map(|w| w * w).sum::<f32>() / data.len() as f32).sqrt();
     let threshold = gif_threshold * rms;
 
-    data
-        .iter()
+    data.iter()
         .map(|&w| {
             if w.abs() < threshold {
                 0
@@ -39,16 +38,12 @@ pub fn quantize_ternary(data: &[f32], gif_threshold: f32) -> Vec<i8> {
 
 /// Quantize a f32 slice to f16 (IEEE 754 half-precision).
 pub fn quantize_f16(data: &[f32]) -> Vec<u8> {
-    data.iter()
-        .flat_map(|&v| f32_to_f16_bytes(v))
-        .collect()
+    data.iter().flat_map(|&v| f32_to_f16_bytes(v)).collect()
 }
 
 /// Keep f32 weights as-is (for Preserve tier).
 pub fn quantize_f32(data: &[f32]) -> Vec<u8> {
-    data.iter()
-        .flat_map(|&v| v.to_le_bytes())
-        .collect()
+    data.iter().flat_map(|&v| v.to_le_bytes()).collect()
 }
 
 fn f32_to_f16_bytes(value: f32) -> [u8; 2] {

@@ -81,13 +81,7 @@ impl PackBuilder {
         Self::default()
     }
 
-    pub fn add_tensor(
-        &mut self,
-        name: String,
-        dtype: u8,
-        shape: Vec<u64>,
-        data: Vec<u8>,
-    ) {
+    pub fn add_tensor(&mut self, name: String, dtype: u8, shape: Vec<u64>, data: Vec<u8>) {
         let byte_len = data.len() as u64;
         let data_offset = self.data.len() as u64;
         self.data.extend_from_slice(&data);
@@ -119,9 +113,8 @@ impl PackBuilder {
         }
 
         let header = PackHeader::new(tensor_count, tensor_table_offset);
-        let mut output = Vec::with_capacity(
-            header_size + tensor_table_size as usize + self.data.len(),
-        );
+        let mut output =
+            Vec::with_capacity(header_size + tensor_table_size as usize + self.data.len());
         output.extend_from_slice(&header.to_bytes());
         for entry in &entries {
             output.extend_from_slice(&entry.to_bytes());
@@ -146,8 +139,7 @@ pub fn parse_pack(bytes: &[u8]) -> Option<(PackHeader, Vec<PackTensorEntry>)> {
     let version = u32::from_le_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]);
     let tensor_count = u32::from_le_bytes([bytes[8], bytes[9], bytes[10], bytes[11]]);
     let tensor_table_offset = u64::from_le_bytes([
-        bytes[12], bytes[13], bytes[14], bytes[15],
-        bytes[16], bytes[17], bytes[18], bytes[19],
+        bytes[12], bytes[13], bytes[14], bytes[15], bytes[16], bytes[17], bytes[18], bytes[19],
     ]);
 
     let header = PackHeader {
@@ -186,8 +178,14 @@ pub fn parse_pack(bytes: &[u8]) -> Option<(PackHeader, Vec<PackTensorEntry>)> {
         let mut shape = Vec::with_capacity(rank as usize);
         for _ in 0..rank {
             let dim = u64::from_le_bytes([
-                bytes[cursor], bytes[cursor + 1], bytes[cursor + 2], bytes[cursor + 3],
-                bytes[cursor + 4], bytes[cursor + 5], bytes[cursor + 6], bytes[cursor + 7],
+                bytes[cursor],
+                bytes[cursor + 1],
+                bytes[cursor + 2],
+                bytes[cursor + 3],
+                bytes[cursor + 4],
+                bytes[cursor + 5],
+                bytes[cursor + 6],
+                bytes[cursor + 7],
             ]);
             shape.push(dim);
             cursor += 8;
@@ -197,12 +195,24 @@ pub fn parse_pack(bytes: &[u8]) -> Option<(PackHeader, Vec<PackTensorEntry>)> {
             return None;
         }
         let byte_len = u64::from_le_bytes([
-            bytes[cursor], bytes[cursor + 1], bytes[cursor + 2], bytes[cursor + 3],
-            bytes[cursor + 4], bytes[cursor + 5], bytes[cursor + 6], bytes[cursor + 7],
+            bytes[cursor],
+            bytes[cursor + 1],
+            bytes[cursor + 2],
+            bytes[cursor + 3],
+            bytes[cursor + 4],
+            bytes[cursor + 5],
+            bytes[cursor + 6],
+            bytes[cursor + 7],
         ]);
         let data_offset = u64::from_le_bytes([
-            bytes[cursor + 8], bytes[cursor + 9], bytes[cursor + 10], bytes[cursor + 11],
-            bytes[cursor + 12], bytes[cursor + 13], bytes[cursor + 14], bytes[cursor + 15],
+            bytes[cursor + 8],
+            bytes[cursor + 9],
+            bytes[cursor + 10],
+            bytes[cursor + 11],
+            bytes[cursor + 12],
+            bytes[cursor + 13],
+            bytes[cursor + 14],
+            bytes[cursor + 15],
         ]);
         cursor += 16;
 

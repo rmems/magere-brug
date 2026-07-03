@@ -19,4 +19,4 @@ pub mod types;
 pub mod weight_pack;
 
 pub use error::{GrokProcessError, Result};
-pub use types::{TensorPrecision, QuantizeConfig, InputFormat};
+pub use types::{InputFormat, QuantizeConfig, TensorPrecision};

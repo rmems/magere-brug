@@ -2,9 +2,11 @@
 
 ## Overview
 
-magere-brug is a **model quantization lab** that owns the artifact registry, manifest system, and quantization recipes for selected MoE and quantization experiments. This document describes the manifest format, batch structure, and reproducibility guarantees.
+magere-brug is a **Spiking Adaptive Activity Quantization (SAAQ) lab** that owns the artifact registry, manifest system, and experiment recipes for selected MoE/SNN quantization experiments. This document describes the manifest format, batch structure, crate layout, and reproducibility guarantees.
 
-The repository name is intentionally humorous (a Dutch bridge engineering reference) and is **not related to sports benchmarking**. Manifest handoff to downstream pipelines (like NFL-combine-for-AI) is managed via standardized JSON files, but magere-brug itself focuses purely on model quantization orchestration.
+The repository name is intentionally humorous (a Dutch bridge engineering reference). Manifest handoff to downstream pipelines (like `combine-for-AI`) is managed via standardized JSON files, but magere-brug itself focuses on SAAQ orchestration: preparing artifacts, defining recipes, and validating SNN-based quantization pipelines.
+
+This is **not** a general model-training framework. For model training, see `rmems/agoge-forger`.
 
 ## Stack Architecture
 
@@ -30,10 +32,10 @@ Python helpers in `scripts/` own:
 
 ### CUDA/Kernels
 
-**NOT in magere-brug.** Custom CUDA kernels live in:
+**NOT in magere-brug.** Neuromorphic inference kernels and model-specific inventory tools live in:
 
-- `myelin-accelerator` — Binary/ternary/SAAQ quantization kernels
-- `xai-dissect` — Grok-1 specific inventory management
+- `myelin-accelerator` — Blackwell-first CUDA kernels for neuromorphic inference
+- `xai-dissect` — static analysis of Grok-family checkpoints
 
 magere-brug **calls** these backends later when execution is needed; it does not own kernel code.
 
@@ -464,7 +466,8 @@ Manifests track SAAQ experiment metadata:
 - **Batch Structure:** Inspired by corinth-canal's batch model (Batch A/B/C)
 - **SAAQ:** Spiking Adaptive Activity Quantization framework
 - **Related Repos:**
-  - xai-dissect — Grok-1 inventory management
-  - corinth-canal — SAAQ routing and telemetry lab
-  - myelin-accelerator — Custom CUDA quantization kernels
-  - NFL-combine-for-AI — Downstream benchmark pipeline
+  - `rmems/agoge-forger` — model-training forge (not in this repo)
+  - `corinth-canal` — reference SAAQ implementation
+  - `myelin-accelerator` — Blackwell-first CUDA kernels for neuromorphic inference
+  - `xai-dissect` — static analysis of Grok-family checkpoints
+  - `combine-for-AI` — neutral benchmark harness for quantization experiments

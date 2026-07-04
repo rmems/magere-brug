@@ -32,12 +32,9 @@ jobs:
 
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: crates/magere-cli
 
       - name: Build magere CLI
-        working-directory: crates/magere-cli
-        run: cargo build --release
+        run: cargo build --release -p magere-cli
 
       - name: Check cloud runner scripts exist
         if: ${{ inputs.run_setup_check == 'true' }}
@@ -93,11 +90,11 @@ jobs:
           fi
           
           # Validate manifest structure
-          ./crates/magere-cli/target/release/magere validate "$MANIFEST"
+          ./target/release/magere validate "$MANIFEST"
           echo "✓ Manifest validation passed"
           
           # Inspect manifest (dry-run, no actual processing)
-          ./crates/magere-cli/target/release/magere inspect "$MANIFEST"
+          ./target/release/magere inspect "$MANIFEST"
           echo "✓ Manifest inspection completed"
           
           # Verify that source artifact path is local (not a URL to download)

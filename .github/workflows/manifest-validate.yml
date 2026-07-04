@@ -20,12 +20,9 @@ jobs:
 
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: crates/magere-cli
 
       - name: Build magere CLI
-        working-directory: crates/magere-cli
-        run: cargo build --release
+        run: cargo build --release -p magere-cli
 
       - name: Validate manifests/examples/*.json
         run: |
@@ -33,7 +30,7 @@ jobs:
           echo "=== Validating manifest examples ==="
           for manifest in manifests/examples/*.json; do
             echo "Validating: $manifest"
-            ./crates/magere-cli/target/release/magere validate "$manifest"
+            ./target/release/magere validate "$manifest"
           done
           echo "✓ All manifest examples validated"
 

@@ -1,52 +1,43 @@
 // SPDX-License-Identifier: Apache-2.0 OR MIT
 //! # magere-corinth-core
 //!
-//! Proven CPU-only SNN pipeline components extracted from `corinth-canal`.
+//! Trainable CPU-only SNN building block for model-training pipelines.
 //!
-//! ## Runtime pipeline
+//! This crate provides a composable spiking neural network layer that can be
+//! used as a building block when training models with SNN, ANN, or hybrid
+//! architectures. It intentionally contains **no CUDA code** — GPU kernels
+//! live in `corinth-canal` and `myelin-accelerator`. All modules here are pure
+//! CPU and suitable for use in any environment without a GPU toolkit.
+//!
+//! ## Core pipeline
 //!
 //! ```text
-//! TelemetrySnapshot
+//! SpikeSample (spike_train)
 //!        │
-//!        ▼  TelemetryEncoder
-//! ternary telemetry events (+1 / 0 / -1 per channel)
-//!        │
-//!        ▼  SignedSplitBankBridge
-//! input spike train
-//!        │
-//!        ▼  SparseGifHiddenLayer
+//!        ▼  GifHiddenLayer
 //! hidden spike train + membrane potentials
 //!        │
-//!        ▼  Projector
-//! dense embedding [EMBEDDING_DIM = 2048]
-//!        │
-//!        ▼  SnnLatentCalibrator
-//! SAAQ latent calibration / telemetry export
+//!        ▼  SpikeToDenseProjector
+//! dense embedding [embedding_dim]
 //! ```
 //!
-//! This crate intentionally contains **no CUDA code** — GPU kernels live in
-//! `corinth-canal` and `myelin-accelerator`. All modules here are pure CPU
-//! and suitable for use in any environment without a GPU toolkit.
+//! The [`SnnBlock`] type composes the hidden layer and projector into a single
+//! trainable unit. The projector weights and bias are learnable; the hidden
+//! layer is a fixed sparse reservoir in this version.
 
+pub mod block;
 pub mod error;
 pub mod funnel;
 pub mod latent;
-pub mod metric;
+pub(crate) mod metric;
 pub mod projector;
-pub mod telemetry;
 pub mod types;
 
-pub use error::{HybridError, Result};
-pub use funnel::{
-    FUNNEL_HIDDEN_NEURONS, FUNNEL_INPUT_NEURONS, FunnelActivity, SignedSplitBankBridge,
-    SparseGifHiddenLayer, TelemetryFunnel,
-};
-pub use latent::{
-    SaaqUpdateRule, SnnDualLatentCalibrator, SnnLatentCalibrator, SnnLatentCsvExporter,
-    SnnLatentSnapshot,
-};
-pub use telemetry::TelemetryEncoder;
+pub use block::SnnBlock;
+pub use error::{Result, SnnError};
+pub use funnel::{GifHiddenLayer, HiddenActivity};
+pub use latent::{SnnMetrics, compute_metrics};
+pub use projector::SpikeToDenseProjector;
 pub use types::{
-    CheckpointFormat, CloudModelSpec, EMBEDDING_DIM, ModelArchitectureClass, ModelConfig,
-    ModelFamily, ModelOutput, ModelTarget, ProjectionMode, RoutingMode, TelemetrySnapshot,
+    DEFAULT_DIM, ProjectionGradients, ProjectionMode, SnnBlockConfig, SnnBlockOutput, SpikeSample,
 };

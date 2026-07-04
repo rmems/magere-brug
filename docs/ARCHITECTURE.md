@@ -2,7 +2,7 @@
 
 ## Overview
 
-magere-brug is a **model quantization lab** that owns the artifact registry, manifest system, and quantization recipes for selected MoE and quantization experiments. This document describes the manifest format, batch structure, and reproducibility guarantees.
+magere-brug is a **model training and quantization lab** that owns the artifact registry, manifest system, and training/quantization recipes for selected architectures including MoE, dense, SNN, and hybrid models. This document describes the manifest format, crate layout, batch structure, and reproducibility guarantees.
 
 The repository name is intentionally humorous (a Dutch bridge engineering reference) and is **not related to sports benchmarking**. Manifest handoff to downstream pipelines (like NFL-combine-for-AI) is managed via standardized JSON files, but magere-brug itself focuses purely on model quantization orchestration.
 
@@ -10,14 +10,11 @@ The repository name is intentionally humorous (a Dutch bridge engineering refere
 
 ### Rust Responsibilities
 
-The Rust CLI (`magere-cli` crate) owns:
+The Rust workspace owns:
 
-- **Manifest validation** against JSON Schema
-- **Artifact registry** for tracking all registered models
-- **Checksum/hash handling** for reproducibility (SHA256, MD5)
-- **Path normalization** for consistent cross-platform paths
-- **Run metadata** tracking and serialization
-- **Handoff files** for downstream consumers
+- **`magere-cli`** — Manifest validation, artifact registry, checksums, path normalization, run metadata, and handoff files.
+- **`magere-corinth-core`** — A trainable CPU-only SNN building block for model-training pipelines. It composes a GIF hidden layer (`GifHiddenLayer`) with a learnable spike-to-dense projector (`SpikeToDenseProjector`) via `SnnBlock`. Default dimensions are 4096×4096×4096 and the projector supports `RateSum`, `TemporalHistogram`, `MembraneSnapshot`, and `SpikingTernary` modes.
+- **`magere-grok-process`** — Grok-1 specific weight packing, ternary quantization, and manifest parsing utilities.
 
 ### Python Responsibilities
 

@@ -1,47 +1,27 @@
 // SPDX-License-Identifier: Apache-2.0 OR MIT
-//! Error types for `corinth-canal`.
-//!
-//! All public functions in this crate return [`HybridError`] wrapped in a
-//! [`Result`].  Downstream callers can match on variants to distinguish
-//! configuration mistakes from I/O failures or runtime model errors.
+//! Error types for `magere-corinth-core`.
 
 use thiserror::Error;
 
-/// Unified error type for the hybrid framework.
+/// Unified error type for the SNN block.
 #[derive(Debug, Error)]
-pub enum HybridError {
-    // ── Configuration errors ──────────────────────────────────────────────
-    /// A required field in [`ModelConfig`](crate::types::ModelConfig) was
-    /// empty or out of range.
+pub enum SnnError {
+    /// A requested configuration is invalid.
     #[error("invalid configuration: {0}")]
     InvalidConfig(String),
 
-    // ── Model loading errors ──────────────────────────────────────────────
-    /// The GGUF file could not be opened / parsed.
-    #[error("model load failed for '{path}': {reason}")]
-    ModelLoad { path: String, reason: String },
-
-    /// The model file format is not supported (e.g. wrong GGUF magic).
-    #[error("unsupported model format: {0}")]
-    UnsupportedFormat(String),
-
-    /// A required tensor or layer was missing from the checkpoint.
-    #[error("missing tensor '{name}' in model '{path}'")]
-    MissingTensor { name: String, path: String },
-
-    // ── Forward-pass errors ───────────────────────────────────────────────
     /// Input slice had the wrong length.
     #[error("input length mismatch: expected {expected}, got {got}")]
     InputLengthMismatch { expected: usize, got: usize },
 
-    /// Router forward pass returned an error.
-    #[error("Router forward pass failed: {0}")]
-    RouterForward(String),
+    /// The SNN state is inconsistent, e.g. a method was called before forward.
+    #[error("state error: {0}")]
+    StateError(String),
 
-    // ── I/O errors ────────────────────────────────────────────────────────
+    /// An I/O error occurred, usually while writing diagnostics.
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
 }
 
 /// Convenience alias used throughout the crate.
-pub type Result<T> = std::result::Result<T, HybridError>;
+pub type Result<T> = std::result::Result<T, SnnError>;

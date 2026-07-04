@@ -17,6 +17,7 @@ The Rust workspace owns:
 - **`magere-cli`** — Manifest validation, artifact registry, checksums, path normalization, run metadata, and handoff files.
 - **`magere-corinth-core`** — CPU-only SNN pipeline components (`TelemetryEncoder`, `SparseGifHiddenLayer`, `Projector`, `SnnLatentCalibrator`) used for SAAQ validation.
 - **`magere-grok-process`** — Grok-1 specific weight packing, ternary quantization, and manifest parsing utilities.
+- **`magere-bridge`** — Placeholder/WIP crate for future cross-crate glue or external bridge logic. Currently a minimal binary stub.
 
 ### Python Responsibilities
 

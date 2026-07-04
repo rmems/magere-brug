@@ -12,14 +12,11 @@ This is **not** a general model-training framework. For model training, see `rme
 
 ### Rust Responsibilities
 
-The Rust CLI (`magere-cli` crate) owns:
+The Rust workspace owns:
 
-- **Manifest validation** against JSON Schema
-- **Artifact registry** for tracking all registered models
-- **Checksum/hash handling** for reproducibility (SHA256, MD5)
-- **Path normalization** for consistent cross-platform paths
-- **Run metadata** tracking and serialization
-- **Handoff files** for downstream consumers
+- **`magere-cli`** — Manifest validation, artifact registry, checksums, path normalization, run metadata, and handoff files.
+- **`magere-corinth-core`** — CPU-only SNN pipeline components (`TelemetryEncoder`, `SparseGifHiddenLayer`, `Projector`, `SnnLatentCalibrator`) used for SAAQ validation.
+- **`magere-grok-process`** — Grok-1 specific weight packing, ternary quantization, and manifest parsing utilities.
 
 ### Python Responsibilities
 
@@ -303,7 +300,7 @@ AWQ Quantization (4-bit)
   ↓ [myelin-accelerator kernel]
 Generated Artifact (AWQ format)
   ↓ [handoff checksum]
-Benchmark Pipeline (NFL-combine-for-AI)
+Benchmark Pipeline (combine-for-AI)
   ↓ [SAAQ telemetry recording]
 Results & Analysis
 ```
@@ -403,7 +400,7 @@ cd scripts && python -m pytest tests/test_manifest.py -v
 
 ### Manifest Handoff Format
 
-magere-brug creates standardized JSON handoff files for downstream consumers (e.g., NFL-combine-for-AI):
+magere-brug creates standardized JSON handoff files for downstream consumers (e.g., `combine-for-AI`):
 
 ```json
 {
@@ -466,7 +463,7 @@ Manifests track SAAQ experiment metadata:
 - **Batch Structure:** Inspired by corinth-canal's batch model (Batch A/B/C)
 - **SAAQ:** Spiking Adaptive Activity Quantization framework
 - **Related Repos:**
-  - `rmems/agoge-forger` — model-training forge (not in this repo)
+  - `rmems/agoge-forger` — model-training forge
   - `corinth-canal` — reference SAAQ implementation
   - `myelin-accelerator` — Blackwell-first CUDA kernels for neuromorphic inference
   - `xai-dissect` — static analysis of Grok-family checkpoints

@@ -103,13 +103,25 @@ impl SpikeToDenseProjector {
             });
         }
 
+        for step in spike_train {
+            for &idx in step {
+                if idx >= self.snn_neurons {
+                    return Err(SnnError::InputLengthMismatch {
+                        expected: self.snn_neurons,
+                        got: idx + 1,
+                    });
+                }
+            }
+        }
+
         let features = self.build_feature_vector(spike_train, potentials, iz_potentials);
-        self.last_features = Some(features.clone());
 
         let embedding = match self.mode {
             ProjectionMode::SpikingTernary => self.spiking_linear_project(&features),
             _ => self.dense_linear_project(&features),
         };
+
+        self.last_features = Some(features);
         Ok(embedding)
     }
 

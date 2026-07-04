@@ -303,7 +303,7 @@ AWQ Quantization (4-bit)
   ↓ [myelin-accelerator kernel]
 Generated Artifact (AWQ format)
   ↓ [handoff checksum]
-Benchmark Pipeline (NFL-combine-for-AI)
+Benchmark Pipeline (combine-for-AI)
   ↓ [SAAQ telemetry recording]
 Results & Analysis
 ```
@@ -403,7 +403,7 @@ cd scripts && python -m pytest tests/test_manifest.py -v
 
 ### Manifest Handoff Format
 
-magere-brug creates standardized JSON handoff files for downstream consumers (e.g., NFL-combine-for-AI):
+magere-brug creates standardized JSON handoff files for downstream consumers (e.g., combine-for-AI):
 
 ```json
 {

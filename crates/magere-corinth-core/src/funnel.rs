@@ -93,9 +93,15 @@ impl GifHiddenLayer {
     /// should call [`reset`](Self::reset) before `forward`.
     pub fn forward(&mut self, sample: &SpikeSample) -> Result<HiddenActivity> {
         if sample.spike_train.is_empty() {
+            let potentials: Vec<f32> = self
+                .membrane
+                .iter()
+                .map(|value| (value / (self.threshold_base * 2.0)).clamp(0.0, 1.0))
+                .collect();
+
             return Ok(HiddenActivity {
                 spike_train: vec![Vec::new(); self.snn_steps],
-                potentials: self.membrane.clone(),
+                potentials,
                 iz_potentials: vec![0.0; 5],
             });
         }

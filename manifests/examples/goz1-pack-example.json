@@ -1,0 +1,77 @@
+{
+  "metadata": {
+    "schema_version": 1,
+    "created_at": "2026-08-12T00:00:00Z",
+    "manifest_id": "olmoe-goz1-pack-example-v1",
+    "description": "Example GOZ1 packed-weight artifact from magere-grok-process (ternary + FP16 hybrid). Illustrative paths and checksums only."
+  },
+  "model": {
+    "slug": "olmoe_goz1_example",
+    "name": "OLMoE-1B-7B GOZ1 pack example",
+    "family": "olmoe",
+    "parameter_count": {
+      "active": 7000000000,
+      "total": 8000000000
+    },
+    "architecture": "moe",
+    "moe_layout": {
+      "expert_count": 8,
+      "capacity_factor": 1.25,
+      "routing_strategy": "top-2"
+    }
+  },
+  "source_artifact": {
+    "format": "gguf",
+    "path": "/models/olmoe/OLMoE-1B-7B-0125-Instruct-F16.gguf",
+    "source_url": "https://huggingface.co/allenai/OLMoE-1B-7B-0125-Instruct",
+    "dtype_summary": "f16",
+    "size_bytes": 15000000000
+  },
+  "generated_artifact": {
+    "format": "goz1",
+    "status": "success",
+    "path": "/packs/olmoe/OLMoE-1B-7B-0125-Instruct.goz1",
+    "version": 1,
+    "checksum": {
+      "sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+    },
+    "size_bytes": 4200000000,
+    "timestamp": "2026-08-12T12:00:00Z",
+    "source_lineage": {
+      "manifest_id": "olmoe-1b-7b-instruct-v1",
+      "path": "/models/olmoe/OLMoE-1B-7B-0125-Instruct-F16.gguf"
+    },
+    "tensor_summary": {
+      "tensor_count": 128,
+      "f16_count": 16,
+      "ternary_count": 112
+    }
+  },
+  "quantization": {
+    "method": "ternary",
+    "bits": 2,
+    "calibration_dataset": "math_logic"
+  },
+  "backend_compatibility": {
+    "gguf": {
+      "supported": true,
+      "status": "proven"
+    },
+    "goz1": {
+      "supported": true,
+      "status": "planned"
+    },
+    "myelin_accelerator": {
+      "supported": true,
+      "status": "planned",
+      "kernel_types": ["ternary", "binary", "saaq"]
+    }
+  },
+  "saaq_experiment": {
+    "saaq_version": "saaq_v1_5",
+    "telemetry_source": "csv_telemetry"
+  },
+  "benchmark_linkage": {
+    "status": "pending"
+  }
+}

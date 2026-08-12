@@ -46,13 +46,14 @@
       "supported": true,
       "status": "testing"
     },
-    "awq": {
+    "goz1": {
       "supported": true,
       "status": "planned"
     },
-    "gptq": {
+    "myelin_accelerator": {
       "supported": true,
-      "status": "planned"
+      "status": "planned",
+      "kernel_types": ["ternary", "binary", "saaq"]
     }
   },
   "saaq_experiment": {

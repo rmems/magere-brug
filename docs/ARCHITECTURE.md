@@ -87,15 +87,25 @@ magere-brug **calls** these backends later when execution is needed; it does not
     }
   },
   "generated_artifact": {
-    "format": "awq|gguf|gptq|ternary|binary",
+    "format": "goz1|gguf|ternary|binary",
     "status": "planned|running|success|failed|skipped",
-    "path": "/output/artifact",
+    "path": "/output/artifact.goz1",
+    "version": 1,
     "checksum": { "sha256": "...", "md5": "..." },
     "size_bytes": 4000000000,
-    "timestamp": "ISO 8601"
+    "timestamp": "ISO 8601",
+    "source_lineage": {
+      "manifest_id": "parent-manifest-id",
+      "path": "/models/source.gguf"
+    },
+    "tensor_summary": {
+      "tensor_count": 128,
+      "f16_count": 16,
+      "ternary_count": 112
+    }
   },
   "quantization": {
-    "method": "awq|gptq|ternary|binary|none",
+    "method": "ternary|binary|gguf|saaq|none",
     "bits": 1|2|3|4|8,
     "group_size": 128,
     "calibration_dataset": "wikitext|math_logic|...",
@@ -104,8 +114,7 @@ magere-brug **calls** these backends later when execution is needed; it does not
   "backend_compatibility": {
     "safetensors": { "supported": true, "status": "proven|testing|planned|not_applicable" },
     "gguf": { "supported": true, "status": "..." },
-    "awq": { "supported": true, "status": "..." },
-    "gptq": { "supported": true, "status": "..." },
+    "goz1": { "supported": true, "status": "..." },
     "myelin_accelerator": { "supported": true, "status": "...", "kernel_types": ["binary", "ternary", "saaq"] }
   },
   "saaq_experiment": {
@@ -141,10 +150,35 @@ magere-brug **calls** these backends later when execution is needed; it does not
 ### Optional Fields
 
 - `quantization` — Omit if source is unquantized
-- `generated_artifact` — Populated after quantization run
+- `generated_artifact` — Populated after packing/quantization (prefer `format: "goz1"`)
 - `backend_compatibility` — Backend support matrix
 - `saaq_experiment` — SAAQ metadata (when applicable)
 - `benchmark_linkage` — Downstream pipeline integration
+
+### GOZ1 generated artifacts
+
+**GOZ1** is the hybrid packed-weight format written by `magere-grok-process` (file magic `GOZ1`, ternary tensors + FP16 passthrough). It is first-class in manifests:
+
+| Field | Role |
+|-------|------|
+| `format: "goz1"` | Identifies a GOZ1 pack |
+| `version` | Pack format version (aligns with `GOZ1_VERSION`, currently `1`) |
+| `path` / `checksum` / `size_bytes` | On-disk location and integrity |
+| `source_lineage` | Parent manifest id and source path used for packing |
+| `tensor_summary` | Optional `tensor_count`, `f16_count`, `ternary_count` |
+
+Primary path: **source → ternary pack (`magere-grok-process`) → GOZ1 → SAAQ (`magere-corinth-core`) → handoff (`combine-for-AI`)**. AWQ and GPTQ are not supported.
+
+### Recipe registration (thin)
+
+`schemas/recipe.schema.json` defines recipe stubs that reference manifests and GOZ1 packs without implementing runners:
+
+- `type`: `register` | `goz1_pack` | `ternary_pack` | `saaq`
+- `inputs.source_manifest` — path or registry id of the source manifest
+- `inputs.goz1_ref` — path or registry id of a registered GOZ1 pack
+- `outputs.generated_format` — prefer `goz1`
+
+Example: `configs/recipes/goz1-ref-example.json`. Packing CLI is tracked separately; SAAQ runner is tracked separately.
 
 ---
 
@@ -222,13 +256,13 @@ Located in `manifests/examples/`:
 
 ### 1. redpajama-incite-7b-chat.json
 
-**Purpose:** Baseline safetensors model for AWQ smoke testing
+**Purpose:** Baseline safetensors model for ternary→GOZ1 packing and SAAQ handoff
 
 - Format: Safetensors
 - Architecture: Dense
 - Parameters: 7B active
-- Quantization Method: AWQ (planned, 4-bit)
-- Backend: Safetensors proven, AWQ/GGUF planned
+- Quantization Method: ternary (planned GOZ1 pack)
+- Backend: Safetensors proven; GOZ1 and GGUF planned
 
 ### 2. olmoe-1b-7b-instruct.json
 
@@ -239,7 +273,7 @@ Located in `manifests/examples/`:
 - Parameters: 7B active, 8B total
 - Quantization: F16 (no quantization)
 - SAAQ Experiment: SAAQ v1.5, CSV RE4 path tracing telemetry
-- Backend Compatibility: GGUF proven, safetensors/AWQ planned
+- Backend Compatibility: GGUF proven; GOZ1 and safetensors planned
 - Status: Completed benchmark run (olmoe_baseline_csv_re4_control)
 
 ### 3. deepseek-coder-v2-lite.json
@@ -250,7 +284,7 @@ Located in `manifests/examples/`:
 - Architecture: MoE (64 experts, top-6 routing)
 - Parameters: 16B total / 2.4B active
 - Quantization: GGUF Q6_K (existing)
-- Backend: GGUF proven, safetensors/AWQ/GPTQ planned
+- Backend: GGUF proven; GOZ1 planned
 - Use Case: Code model quantization track
 
 ### 4. grok-1-future-plan.json
@@ -259,10 +293,19 @@ Located in `manifests/examples/`:
 
 - **Status:** Source-only, no execution
 - **Management:** Via grok-ozempic + xai-dissect (separate repos)
+- **Target pack:** GOZ1 (planned), ternary method
 - **Backend:** myelin-accelerator (ternary, binary, SAAQ kernels planned)
 - **Format:** Local directory (checkpoint)
 - **Architecture:** MoE (256 experts, expert choice routing)
-- **Not Active:** All cloud/local backends marked "not_applicable" except myelin_accelerator
+
+### 5. goz1-pack-example.json
+
+**Purpose:** Full example of a registered GOZ1 generated artifact
+
+- Source: GGUF (OLMoE)
+- Generated: `format: "goz1"`, version 1, path, checksum, `source_lineage`, `tensor_summary`
+- Quantization method: ternary
+- Backend: `goz1` + `myelin_accelerator` planned
 
 ---
 
@@ -276,13 +319,13 @@ A manifest guarantees model reproducibility if:
    - For safetensors: shard paths, shard sizes, dtype summary
 
 2. **Quantization parameters are captured:**
-   - Method (awq, gptq, ternary, binary, none)
-   - Bit width, group size
+   - Method (ternary, binary, gguf, saaq, none)
+   - Bit width, group size when applicable
    - Calibration dataset reference
    - Calibration config path
 
 3. **Backend compatibility is documented:**
-   - Which formats are supported
+   - Which formats are supported (safetensors, gguf, goz1, myelin_accelerator)
    - Status of each backend (proven, testing, planned, not_applicable)
 
 4. **Run metadata is recorded:**
@@ -293,16 +336,16 @@ A manifest guarantees model reproducibility if:
 ### Example Reproducibility Chain
 
 ```
-Source Artifact (safetensors)
+Source Artifact (safetensors | gguf | local_dir)
   ↓ [checksum verification]
-Calibration Dataset (wikitext-2)
-  ↓ [config: 128 samples, 128 group size]
-AWQ Quantization (4-bit)
-  ↓ [myelin-accelerator kernel]
-Generated Artifact (AWQ format)
-  ↓ [handoff checksum]
-Benchmark Pipeline (combine-for-AI)
-  ↓ [SAAQ telemetry recording]
+Ternary pack via magere-grok-process
+  ↓ [GOZ1 magic, version, tensor table]
+Generated Artifact (GOZ1)
+  ↓ [register in manifest: path, checksum, lineage]
+SAAQ validation (magere-corinth-core)
+  ↓ [latent telemetry CSV + run manifest]
+Benchmark / reporting (combine-for-AI)
+  ↓
 Results & Analysis
 ```
 
@@ -370,15 +413,9 @@ python scripts/register_gguf.py /models/olmoe/OLMoE-1B-7B-0125-Instruct-F16.gguf
 
 **Returns:** GGUF version, tensor count, inferred quantization format
 
-### quant_awq.py
+### GOZ1 packing (Rust)
 
-Orchestrate AWQ quantization runs:
-
-```bash
-python scripts/quant_awq.py /models/redpajama /quantized/redpajama-awq-4bit
-```
-
-**Returns:** AWQ run plan, status tracking, manifest stub generation
+Packing into GOZ1 is implemented in **`magere-grok-process`** (header, tensor table, stream writers). Recipe-driven pack CLI is tracked separately; manifests register GOZ1 outputs as first-class `generated_artifact` entries.
 
 ### Unit Tests
 
@@ -393,7 +430,7 @@ cd scripts && python -m pytest tests/test_manifest.py -v
 - Required field presence
 - Checksum field shape
 - GGUF/Safetensors source format acceptance
-- Quantization method support
+- GOZ1 generated-artifact structure
 
 ---
 
@@ -431,30 +468,28 @@ Manifests track SAAQ experiment metadata:
 
 ## Limitations & Future Work
 
-### Sprint (Before 2026-05-28)
+### Done (foundation)
 
-**In Scope:**
-- ✓ JSON Schema definition
+- ✓ JSON Schema definition (including first-class GOZ1)
 - ✓ Rust CLI skeleton (parsing, validation, registry)
-- ✓ Python helper script stubs
-- ✓ 4 example manifests
+- ✓ Python helper script stubs (GGUF/safetensors inspection)
+- ✓ Example manifests (including GOZ1 pack example)
+- ✓ Thin recipe schema for GOZ1 refs
 - ✓ Batch A/B structure + Cloud stubs
-- ✓ Documentation
+- ✓ Documentation (primary path ternary → GOZ1 → SAAQ)
 
-**Out of Scope:**
-- ✗ Full AWQ generation execution (schema only)
-- ✗ myelin-accelerator kernel execution (schema fields only)
-- ✗ Cloud backend real integration
-- ✗ Full Grok-1 quantization execution
-- ✗ GPTQ execution (placeholder fields only)
+### Explicitly out of scope for this lab
 
-### Phase 2 (After Sprint)
+- AWQ / GPTQ quantization paths (removed; not on the primary path)
+- CUDA kernels for neuromorphic inference (see `myelin-accelerator`)
+- Training loops (see `rmems/agoge-forger`)
 
-- Full AWQ smoke test execution
-- myelin-accelerator kernel invocation
-- GPTQ comparison baseline runs
-- Cloud backend integration (NIM, Vertex AI, etc.)
-- Full Grok-1 ternary quantization
+### Next pipeline work
+
+- Recipe-driven ternary pack → GOZ1 via `magere-grok-process`
+- Recipe-driven SAAQ runner on top of registered GOZ1 / source artifacts
+- myelin-accelerator kernel invocation from handoff manifests
+- Cloud backend integration (NIM, Vertex AI, etc.) when needed
 - Extended batch model onboarding
 
 ---

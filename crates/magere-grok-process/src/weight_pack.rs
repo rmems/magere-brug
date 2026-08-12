@@ -20,7 +20,7 @@ pub struct PackHeader {
 impl PackHeader {
     pub fn new(tensor_count: u32, tensor_table_offset: u64) -> Self {
         Self {
-            magic: [b'G', b'O', b'Z', b'1'],
+            magic: *b"GOZ1",
             version: GOZ1_VERSION,
             tensor_count,
             tensor_table_offset,

@@ -3,7 +3,7 @@
     "schema_version": 1,
     "created_at": "2026-05-26T00:00:00Z",
     "manifest_id": "redpajama-incite-7b-chat-v1",
-    "description": "RedPajama-INCITE-7B-Chat baseline model for AWQ smoke test"
+    "description": "RedPajama-INCITE-7B-Chat safetensors baseline for ternary→GOZ1 packing and SAAQ handoff"
   },
   "model": {
     "slug": "redpajama_incite_7b_chat",
@@ -30,29 +30,34 @@
       ]
     }
   },
+  "generated_artifact": {
+    "format": "goz1",
+    "status": "planned",
+    "version": 1
+  },
   "quantization": {
-    "method": "awq",
-    "bits": 4,
-    "group_size": 128,
+    "method": "ternary",
+    "bits": 2,
     "calibration_dataset": "wikitext-2",
-    "calibration_config_path": "/configs/quantization/awq_redpajama_wikitext.json"
+    "calibration_config_path": "/configs/quantization/ternary_redpajama_wikitext.json"
   },
   "backend_compatibility": {
     "safetensors": {
       "supported": true,
       "status": "proven"
     },
-    "awq": {
-      "supported": true,
-      "status": "planned"
-    },
     "gguf": {
       "supported": true,
       "status": "planned"
     },
-    "gptq": {
-      "supported": false,
-      "status": "not_applicable"
+    "goz1": {
+      "supported": true,
+      "status": "planned"
+    },
+    "myelin_accelerator": {
+      "supported": true,
+      "status": "planned",
+      "kernel_types": ["ternary", "binary", "saaq"]
     }
   },
   "saaq_experiment": {

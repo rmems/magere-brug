@@ -73,7 +73,8 @@ pub struct Artifact {
     pub timestamp: Option<String>,
 }
 
-/// Generated artifact with optional path for planned artifacts
+/// Generated artifact with optional path for planned artifacts.
+/// Prefer format `goz1` for hybrid ternary packs from magere-grok-process.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GeneratedArtifact {
     pub format: String,
@@ -81,6 +82,9 @@ pub struct GeneratedArtifact {
     pub path: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub status: Option<String>,
+    /// GOZ1 (or other pack) format version; aligns with GOZ1_VERSION when format is goz1.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub version: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub source_url: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -93,6 +97,32 @@ pub struct GeneratedArtifact {
     pub shard_info: Option<ShardInfo>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub timestamp: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_lineage: Option<SourceLineage>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tensor_summary: Option<TensorSummary>,
+}
+
+/// Lineage from a generated pack back to its source artifact or parent manifest.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SourceLineage {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub manifest_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub checksum: Option<Checksum>,
+}
+
+/// Tensor counts for a GOZ1 (or similar) pack.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TensorSummary {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tensor_count: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub f16_count: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ternary_count: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -180,9 +210,11 @@ impl Manifest {
         Ok(Self::from_json(&content)?)
     }
 
-    /// Validate required fields
+    /// Validate required fields and supported format enums.
     pub fn validate(&self) -> Result<(), String> {
         const VALID_SOURCE_FORMATS: &[&str] = &["safetensors", "gguf", "hf_repo", "local_dir"];
+        const VALID_GENERATED_FORMATS: &[&str] = &["goz1", "gguf", "ternary", "binary"];
+        const VALID_QUANT_METHODS: &[&str] = &["gguf", "ternary", "binary", "saaq", "none"];
         const VALID_ARCHITECTURES: &[&str] = &["dense", "moe"];
 
         if self.metadata.schema_version < 1 {
@@ -230,6 +262,62 @@ impl Manifest {
 
         if self.source_artifact.path.is_empty() {
             return Err("source_artifact.path is required".to_string());
+        }
+
+        if let Some(generated) = &self.generated_artifact {
+            if generated.format.is_empty() {
+                return Err(
+                    "generated_artifact.format is required when generated_artifact is set"
+                        .to_string(),
+                );
+            }
+            if generated.format == "awq" || generated.format == "gptq" {
+                return Err(format!(
+                    "generated_artifact.format '{}' is not supported; use goz1 (or gguf/ternary/binary)",
+                    generated.format
+                ));
+            }
+            if !VALID_GENERATED_FORMATS.contains(&generated.format.as_str()) {
+                return Err(
+                    "generated_artifact.format must be one of: goz1, gguf, ternary, binary"
+                        .to_string(),
+                );
+            }
+            // Planned GOZ1 may omit path; if path is set, optionally check readability.
+            if let Some(path) = &generated.path
+                && !path.is_empty()
+            {
+                let p = std::path::Path::new(path);
+                if p.exists() && !p.is_file() {
+                    return Err(format!(
+                        "generated_artifact.path exists but is not a file: {}",
+                        path
+                    ));
+                }
+            }
+            if generated.format == "goz1"
+                && let Some(version) = generated.version
+                && version < 1
+            {
+                return Err("generated_artifact.version must be >= 1 for goz1".to_string());
+            }
+        }
+
+        if let Some(quant) = &self.quantization
+            && let Some(method) = &quant.method
+        {
+            if method == "awq" || method == "gptq" {
+                return Err(format!(
+                    "quantization.method '{}' is not supported; primary path is ternary/goz1/saaq",
+                    method
+                ));
+            }
+            if !VALID_QUANT_METHODS.contains(&method.as_str()) {
+                return Err(
+                    "quantization.method must be one of: gguf, ternary, binary, saaq, none"
+                        .to_string(),
+                );
+            }
         }
 
         Ok(())
@@ -432,11 +520,161 @@ mod tests {
         let manifest = Manifest::from_json(json);
         assert!(manifest.is_ok());
         let m = manifest.unwrap();
+        assert!(m.validate().is_ok());
         assert!(m.generated_artifact.is_some());
         let generated = m.generated_artifact.unwrap();
         assert_eq!(generated.format, "ternary");
         assert_eq!(generated.status, Some("planned".to_string()));
         assert!(generated.path.is_none());
+    }
+
+    #[test]
+    fn test_goz1_generated_artifact_accepted() {
+        let json = r#"{
+            "metadata": {
+                "schema_version": 1,
+                "created_at": "2026-05-26T00:00:00Z",
+                "manifest_id": "test-goz1-v1"
+            },
+            "model": {
+                "slug": "test_model",
+                "name": "Test Model",
+                "family": "test",
+                "parameter_count": {"active": 1000000},
+                "architecture": "dense"
+            },
+            "source_artifact": {
+                "format": "safetensors",
+                "path": "/models/test.safetensors"
+            },
+            "generated_artifact": {
+                "format": "goz1",
+                "status": "success",
+                "path": "/packs/test.goz1",
+                "version": 1,
+                "checksum": {"sha256": "abc123"},
+                "size_bytes": 1024,
+                "source_lineage": {
+                    "manifest_id": "test-goz1-v1",
+                    "path": "/models/test.safetensors"
+                },
+                "tensor_summary": {
+                    "tensor_count": 10,
+                    "f16_count": 2,
+                    "ternary_count": 8
+                }
+            },
+            "quantization": {
+                "method": "ternary",
+                "bits": 2
+            }
+        }"#;
+
+        let m = Manifest::from_json(json).unwrap();
+        assert!(m.validate().is_ok());
+        let g = m.generated_artifact.unwrap();
+        assert_eq!(g.format, "goz1");
+        assert_eq!(g.version, Some(1));
+        assert_eq!(g.tensor_summary.unwrap().tensor_count, Some(10));
+    }
+
+    #[test]
+    fn test_planned_goz1_without_path_accepted() {
+        let json = r#"{
+            "metadata": {
+                "schema_version": 1,
+                "created_at": "2026-05-26T00:00:00Z",
+                "manifest_id": "test-goz1-planned"
+            },
+            "model": {
+                "slug": "test_model",
+                "name": "Test Model",
+                "family": "test",
+                "parameter_count": {"active": 1000000},
+                "architecture": "dense"
+            },
+            "source_artifact": {
+                "format": "gguf",
+                "path": "/models/test.gguf"
+            },
+            "generated_artifact": {
+                "format": "goz1",
+                "status": "planned",
+                "version": 1
+            },
+            "quantization": {"method": "ternary", "bits": 2}
+        }"#;
+
+        let m = Manifest::from_json(json).unwrap();
+        assert!(m.validate().is_ok());
+    }
+
+    #[test]
+    fn test_awq_generated_format_rejected() {
+        let json = r#"{
+            "metadata": {
+                "schema_version": 1,
+                "created_at": "2026-05-26T00:00:00Z",
+                "manifest_id": "test-awq"
+            },
+            "model": {
+                "slug": "test_model",
+                "name": "Test Model",
+                "family": "test",
+                "parameter_count": {"active": 1000000},
+                "architecture": "dense"
+            },
+            "source_artifact": {
+                "format": "safetensors",
+                "path": "/models/test.safetensors"
+            },
+            "generated_artifact": {
+                "format": "awq",
+                "status": "planned"
+            }
+        }"#;
+
+        let m = Manifest::from_json(json).unwrap();
+        let err = m.validate().unwrap_err();
+        assert!(err.contains("awq") || err.contains("not supported"));
+    }
+
+    #[test]
+    fn test_awq_quantization_method_rejected() {
+        let json = r#"{
+            "metadata": {
+                "schema_version": 1,
+                "created_at": "2026-05-26T00:00:00Z",
+                "manifest_id": "test-awq-method"
+            },
+            "model": {
+                "slug": "test_model",
+                "name": "Test Model",
+                "family": "test",
+                "parameter_count": {"active": 1000000},
+                "architecture": "dense"
+            },
+            "source_artifact": {
+                "format": "safetensors",
+                "path": "/models/test.safetensors"
+            },
+            "quantization": {"method": "awq", "bits": 4}
+        }"#;
+
+        let m = Manifest::from_json(json).unwrap();
+        let err = m.validate().unwrap_err();
+        assert!(err.contains("awq") || err.contains("not supported"));
+    }
+
+    #[test]
+    fn test_example_goz1_manifest_validates() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../manifests/examples/goz1-pack-example.json"
+        );
+        let m = Manifest::from_file(path).expect("load goz1 example");
+        assert!(m.validate().is_ok());
+        assert_eq!(m.generated_artifact.as_ref().unwrap().format, "goz1");
     }
 
     #[test]

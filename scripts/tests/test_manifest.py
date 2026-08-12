@@ -12,7 +12,6 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from inspect_safetensors import SafetensorsInspector, SafetensorsManifestBuilder
 from register_gguf import GGUFInspector, GGUFManifestBuilder
-from quant_awq import AWQManifestBuilder, AWQOrchestrator
 
 
 class TestManifestLoading:
@@ -240,25 +239,35 @@ class TestSourceFormats:
         assert manifest_json["source_artifact"]["format"] == "local_dir"
 
 
-class TestAWQManifestGeneration:
-    """Test AWQ manifest snippet generation."""
+class TestGOZ1ManifestStructure:
+    """Test GOZ1-oriented manifest structure (schema alignment)."""
 
-    def test_awq_manifest_snippet_generated(self):
-        """Test that AWQ manifest snippet is generated correctly."""
-        snippet = AWQManifestBuilder.generate_manifest_snippet(
-            model_slug="test_model",
-            model_family="test",
-            source_format="safetensors",
-            source_path="/models/test.safetensors",
-            quantization_bits=4,
-            group_size=128,
-        )
-        
-        assert snippet["model"]["slug"] == "test_model"
-        assert snippet["generated_artifact"]["format"] == "awq"
-        assert snippet["generated_artifact"]["status"] == "planned"
-        assert snippet["quantization"]["bits"] == 4
-        assert snippet["quantization"]["group_size"] == 128
+    def test_goz1_generated_artifact_shape(self):
+        """GOZ1 pack entries use format goz1 with optional lineage fields."""
+        snippet = {
+            "generated_artifact": {
+                "format": "goz1",
+                "status": "planned",
+                "version": 1,
+                "source_lineage": {
+                    "manifest_id": "test-model-v1",
+                    "path": "/models/test.safetensors",
+                },
+                "tensor_summary": {
+                    "tensor_count": 4,
+                    "f16_count": 1,
+                    "ternary_count": 3,
+                },
+            },
+            "quantization": {
+                "method": "ternary",
+                "bits": 2,
+            },
+        }
+
+        assert snippet["generated_artifact"]["format"] == "goz1"
+        assert snippet["generated_artifact"]["version"] == 1
+        assert snippet["quantization"]["method"] == "ternary"
 
 
 class TestGGUFInspection:

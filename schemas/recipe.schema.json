@@ -1,0 +1,70 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "magere-brug Recipe",
+  "description": "Thin recipe registration schema for referencing source manifests and GOZ1 packs. Full runners live in later issues (pack #19, SAAQ #8).",
+  "type": "object",
+  "required": [
+    "recipe_id",
+    "type"
+  ],
+  "properties": {
+    "recipe_id": {
+      "type": "string",
+      "description": "Stable recipe identifier"
+    },
+    "type": {
+      "type": "string",
+      "enum": [
+        "register",
+        "goz1_pack",
+        "ternary_pack",
+        "saaq"
+      ],
+      "description": "Recipe kind. goz1_pack/ternary_pack drive packing; saaq runs SAAQ validation."
+    },
+    "description": {
+      "type": "string"
+    },
+    "inputs": {
+      "type": "object",
+      "description": "Input references for the recipe",
+      "properties": {
+        "source_manifest": {
+          "type": "string",
+          "description": "Path or registry id of the source model manifest"
+        },
+        "goz1_ref": {
+          "type": "string",
+          "description": "Path or registry id of a registered GOZ1 pack (for post-pack steps such as SAAQ)"
+        }
+      },
+      "additionalProperties": false
+    },
+    "outputs": {
+      "type": "object",
+      "description": "Expected outputs",
+      "properties": {
+        "generated_format": {
+          "type": "string",
+          "enum": [
+            "goz1",
+            "gguf",
+            "ternary",
+            "binary"
+          ],
+          "description": "Format of the primary generated artifact; prefer goz1"
+        },
+        "manifest_id": {
+          "type": "string",
+          "description": "Manifest id to write or update after the recipe"
+        },
+        "output_dir": {
+          "type": "string",
+          "description": "Directory for pack or SAAQ run outputs"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

@@ -3,7 +3,7 @@
     "schema_version": 1,
     "created_at": "2026-05-26T00:00:00Z",
     "manifest_id": "grok-1-future-plan-v1",
-    "description": "Grok-1 future planning entry. Source-only, no execution. Managed by grok-ozempic + xai-dissect."
+    "description": "Grok-1 future planning entry. Source-only, no execution. Managed by grok-ozempic + xai-dissect. Target pack: GOZ1."
   },
   "model": {
     "slug": "grok_1_future",
@@ -28,8 +28,9 @@
     "size_bytes": 600000000000
   },
   "generated_artifact": {
-    "format": "ternary",
-    "status": "planned"
+    "format": "goz1",
+    "status": "planned",
+    "version": 1
   },
   "quantization": {
     "method": "ternary",
@@ -46,13 +47,9 @@
       "supported": false,
       "status": "not_applicable"
     },
-    "awq": {
-      "supported": false,
-      "status": "not_applicable"
-    },
-    "gptq": {
-      "supported": false,
-      "status": "not_applicable"
+    "goz1": {
+      "supported": true,
+      "status": "planned"
     },
     "myelin_accelerator": {
       "supported": true,

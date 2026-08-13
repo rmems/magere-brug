@@ -167,7 +167,9 @@ magere-brug **calls** these backends later when execution is needed; it does not
 | `source_lineage` | Parent manifest id and source path used for packing |
 | `tensor_summary` | Optional `tensor_count`, `f16_count`, `ternary_count` |
 
-Primary path: **source → ternary pack (`magere-grok-process`) → GOZ1 → SAAQ (`magere-corinth-core`) → handoff (`combine-for-AI`)**. AWQ and GPTQ are not supported.
+Primary path: **packable source → ternary pack (`magere-grok-process`) → GOZ1 → SAAQ (`magere-corinth-core`) → handoff (`combine-for-AI`)**. AWQ and GPTQ are not supported.
+
+`magere-grok-process` currently accepts **safetensors** and **npy_dir** as pack inputs (`InputFormat`). GGUF remains a first-class *registry* source format for local routing and SAAQ, but is not a direct packer input yet.
 
 ### Recipe registration (thin)
 
@@ -300,9 +302,9 @@ Located in `manifests/examples/`:
 
 ### 5. goz1-pack-example.json
 
-**Purpose:** Full example of a registered GOZ1 generated artifact
+**Purpose:** Full example of a registered GOZ1-generated artifact
 
-- Source: GGUF (OLMoE)
+- Source: Safetensors (pack-compatible input for `magere-grok-process`)
 - Generated: `format: "goz1"`, version 1, path, checksum, `source_lineage`, `tensor_summary`
 - Quantization method: ternary
 - Backend: `goz1` + `myelin_accelerator` planned
@@ -336,13 +338,13 @@ A manifest guarantees model reproducibility if:
 ### Example Reproducibility Chain
 
 ```
-Source Artifact (safetensors | gguf | local_dir)
+Source Artifact for packing (safetensors | npy_dir)
   ↓ [checksum verification]
-Ternary pack via magere-grok-process
-  ↓ [GOZ1 magic, version, tensor table]
+Ternary pack via magere-grok-process (skeleton: header/table layout; tensor load TBD)
+  ↓ [GOZ1 magic, version 1, tensor table]
 Generated Artifact (GOZ1)
   ↓ [register in manifest: path, checksum, lineage]
-SAAQ validation (magere-corinth-core)
+SAAQ validation (magere-corinth-core) — may also start from GGUF registry sources
   ↓ [latent telemetry CSV + run manifest]
 Benchmark / reporting (combine-for-AI)
   ↓
@@ -415,7 +417,7 @@ python scripts/register_gguf.py /models/olmoe/OLMoE-1B-7B-0125-Instruct-F16.gguf
 
 ### GOZ1 packing (Rust)
 
-Packing into GOZ1 is implemented in **`magere-grok-process`** (header, tensor table, stream writers). Recipe-driven pack CLI is tracked separately; manifests register GOZ1 outputs as first-class `generated_artifact` entries.
+**`magere-grok-process`** owns the GOZ1 layout (magic, version, tensor table, stream/pack builders). The end-to-end packer (`run_quantize`) is still a **skeleton**: it builds a structurally valid pack shell but does not yet load real tensor weights (placeholder shapes/data). Do not treat skeleton output as a production checkpoint. Recipe-driven pack CLI is tracked separately; manifests register completed GOZ1 packs as first-class `generated_artifact` entries when a real pack path exists.
 
 ### Unit Tests
 

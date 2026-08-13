@@ -240,34 +240,96 @@ class TestSourceFormats:
 
 
 class TestGOZ1ManifestStructure:
-    """Test GOZ1-oriented manifest structure (schema alignment)."""
+    """Test GOZ1-oriented manifests against artifact-shape + schema contracts."""
 
-    def test_goz1_generated_artifact_shape(self):
-        """GOZ1 pack entries use format goz1 with optional lineage fields."""
-        snippet = {
-            "generated_artifact": {
-                "format": "goz1",
-                "status": "planned",
-                "version": 1,
-                "source_lineage": {
-                    "manifest_id": "test-model-v1",
-                    "path": "/models/test.safetensors",
-                },
-                "tensor_summary": {
-                    "tensor_count": 4,
-                    "f16_count": 1,
-                    "ternary_count": 3,
-                },
+    @staticmethod
+    def _repo_root() -> Path:
+        return Path(__file__).resolve().parents[2]
+
+    @staticmethod
+    def _minimal_goz1_fixture(**generated_overrides):
+        generated = {
+            "format": "goz1",
+            "status": "planned",
+            "version": 1,
+            "source_lineage": {
+                "manifest_id": "test-model-v1",
+                "path": "/models/test.safetensors",
             },
+            "tensor_summary": {
+                "tensor_count": 4,
+                "f16_count": 1,
+                "ternary_count": 3,
+            },
+        }
+        generated.update(generated_overrides)
+        return {
+            "metadata": {
+                "schema_version": 1,
+                "created_at": "2026-05-26T00:00:00Z",
+                "manifest_id": "test-goz1-v1",
+                "description": "GOZ1 fixture for unit tests",
+            },
+            "model": {
+                "slug": "test_model",
+                "name": "Test Model",
+                "family": "other",
+                "parameter_count": {"active": 1000000},
+                "architecture": "dense",
+            },
+            "source_artifact": {
+                "format": "safetensors",
+                "path": "/models/test.safetensors",
+            },
+            "generated_artifact": generated,
             "quantization": {
                 "method": "ternary",
                 "bits": 2,
             },
+            "backend_compatibility": {
+                "safetensors": {"supported": True, "status": "proven"},
+                "goz1": {"supported": True, "status": "planned"},
+            },
         }
 
-        assert snippet["generated_artifact"]["format"] == "goz1"
-        assert snippet["generated_artifact"]["version"] == 1
-        assert snippet["quantization"]["method"] == "ternary"
+    def test_goz1_example_manifest_loads(self):
+        """Repo GOZ1 example is a complete, loadable manifest."""
+        path = self._repo_root() / "manifests" / "examples" / "goz1-pack-example.json"
+        with open(path) as f:
+            manifest = json.load(f)
+        assert manifest["generated_artifact"]["format"] == "goz1"
+        assert manifest["generated_artifact"]["version"] == 1
+        assert manifest["generated_artifact"]["status"] == "success"
+        assert manifest["generated_artifact"]["path"]
+        assert "awq" not in manifest.get("backend_compatibility", {})
+        assert "gptq" not in manifest.get("backend_compatibility", {})
+
+    def test_goz1_fixture_shape_and_enums(self):
+        """GOZ1 fixture uses allowed formats/methods and rejects removed backends."""
+        fixture = self._minimal_goz1_fixture()
+        assert fixture["generated_artifact"]["format"] == "goz1"
+        assert fixture["generated_artifact"]["version"] == 1
+        assert fixture["quantization"]["method"] == "ternary"
+        assert fixture["generated_artifact"]["format"] not in ("awq", "gptq")
+        assert fixture["quantization"]["method"] not in ("awq", "gptq")
+
+    def test_removed_backends_not_in_allowed_keys(self):
+        """AWQ/GPTQ are not part of the supported backend key set."""
+        allowed = {"safetensors", "gguf", "goz1", "myelin_accelerator"}
+        assert "awq" not in allowed
+        assert "gptq" not in allowed
+        fixture = self._minimal_goz1_fixture()
+        for key in fixture["backend_compatibility"]:
+            assert key in allowed
+
+    def test_success_without_path_fails_artifact_shape(self):
+        """check_artifact_shape requires path when status is success."""
+        sys.path.insert(0, str(self._repo_root() / "scripts"))
+        from check_artifact_shape import check_artifact
+
+        bad = {"format": "goz1", "status": "success"}
+        errors = check_artifact(bad, "generated_artifact", "fixture.json")
+        assert any("path" in e for e in errors)
 
 
 class TestGGUFInspection:

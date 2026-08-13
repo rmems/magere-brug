@@ -31,10 +31,12 @@
       "properties": {
         "source_manifest": {
           "type": "string",
+          "minLength": 1,
           "description": "Path or registry id of the source model manifest"
         },
         "goz1_ref": {
           "type": "string",
+          "minLength": 1,
           "description": "Path or registry id of a registered GOZ1 pack (for post-pack steps such as SAAQ)"
         }
       },
@@ -66,5 +68,91 @@
       "additionalProperties": false
     }
   },
-  "additionalProperties": false
+  "additionalProperties": false,
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "enum": [
+              "goz1_pack",
+              "ternary_pack"
+            ]
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "required": [
+          "inputs"
+        ],
+        "properties": {
+          "inputs": {
+            "required": [
+              "source_manifest"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "saaq"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "required": [
+          "inputs"
+        ],
+        "properties": {
+          "inputs": {
+            "anyOf": [
+              {
+                "required": [
+                  "source_manifest"
+                ]
+              },
+              {
+                "required": [
+                  "goz1_ref"
+                ]
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "register"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "required": [
+          "inputs"
+        ],
+        "properties": {
+          "inputs": {
+            "required": [
+              "source_manifest"
+            ]
+          }
+        }
+      }
+    }
+  ]
 }

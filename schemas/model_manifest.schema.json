@@ -223,6 +223,9 @@
     "generated_artifact": {
       "type": "object",
       "description": "Generated artifact tracking (optional). GOZ1 is the hybrid packed-weight format produced by magere-grok-process (magic GOZ1, ternary + FP16).",
+      "required": [
+        "format"
+      ],
       "properties": {
         "format": {
           "type": "string",
@@ -247,12 +250,13 @@
         },
         "path": {
           "type": "string",
-          "description": "Path to generated artifact"
+          "minLength": 1,
+          "description": "Path to generated artifact (required unless status is planned or skipped)"
         },
         "version": {
           "type": "integer",
-          "description": "Format version (for goz1, aligns with GOZ1_VERSION, currently 1)",
-          "minimum": 1
+          "description": "Format version (for goz1, must match GOZ1_VERSION, currently 1)",
+          "const": 1
         },
         "checksum": {
           "type": "object",
@@ -320,7 +324,49 @@
             }
           }
         }
-      }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "enum": [
+                  "success",
+                  "running",
+                  "failed"
+                ]
+              }
+            },
+            "required": [
+              "status"
+            ]
+          },
+          "then": {
+            "required": [
+              "path"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "format": {
+                "const": "goz1"
+              }
+            },
+            "required": [
+              "format"
+            ]
+          },
+          "then": {
+            "properties": {
+              "version": {
+                "const": 1
+              }
+            }
+          }
+        }
+      ]
     },
     "quantization": {
       "type": "object",
@@ -445,7 +491,8 @@
             }
           }
         }
-      }
+      },
+      "additionalProperties": false
     },
     "saaq_experiment": {
       "type": "object",

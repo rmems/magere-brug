@@ -265,6 +265,11 @@ impl Manifest {
         }
 
         if let Some(generated) = &self.generated_artifact {
+            const VALID_GENERATED_STATUSES: &[&str] =
+                &["planned", "running", "success", "failed", "skipped"];
+            // GOZ1 layout currently written by magere-grok-process.
+            const SUPPORTED_GOZ1_VERSION: u32 = 1;
+
             if generated.format.is_empty() {
                 return Err(
                     "generated_artifact.format is required when generated_artifact is set"
@@ -283,7 +288,23 @@ impl Manifest {
                         .to_string(),
                 );
             }
-            // Planned GOZ1 may omit path; if path is set, optionally check readability.
+            if let Some(status) = &generated.status {
+                if !VALID_GENERATED_STATUSES.contains(&status.as_str()) {
+                    return Err(
+                        "generated_artifact.status must be one of: planned, running, success, failed, skipped"
+                            .to_string(),
+                    );
+                }
+                let path_ok = generated.path.as_ref().is_some_and(|p| !p.is_empty());
+                // Match scripts/check_artifact_shape.py: path required unless planned/skipped.
+                if !path_ok && status != "planned" && status != "skipped" {
+                    return Err(format!(
+                        "generated_artifact.path is required when status is '{}'",
+                        status
+                    ));
+                }
+            }
+            // If path is set, optionally check it is a file when present on disk.
             if let Some(path) = &generated.path
                 && !path.is_empty()
             {
@@ -295,11 +316,31 @@ impl Manifest {
                     ));
                 }
             }
-            if generated.format == "goz1"
-                && let Some(version) = generated.version
-                && version < 1
-            {
-                return Err("generated_artifact.version must be >= 1 for goz1".to_string());
+            if generated.format == "goz1" {
+                match generated.version {
+                    Some(version) if version != SUPPORTED_GOZ1_VERSION => {
+                        return Err(format!(
+                            "generated_artifact.version must be {} for goz1 (got {})",
+                            SUPPORTED_GOZ1_VERSION, version
+                        ));
+                    }
+                    _ => {}
+                }
+                if let Some(summary) = &generated.tensor_summary
+                    && let (Some(total), Some(f16), Some(ternary)) = (
+                        summary.tensor_count,
+                        summary.f16_count,
+                        summary.ternary_count,
+                    )
+                {
+                    let sum = f16.saturating_add(ternary);
+                    if sum != total {
+                        return Err(format!(
+                            "generated_artifact.tensor_summary: f16_count ({}) + ternary_count ({}) must equal tensor_count ({})",
+                            f16, ternary, total
+                        ));
+                    }
+                }
             }
         }
 
@@ -317,6 +358,25 @@ impl Manifest {
                     "quantization.method must be one of: gguf, ternary, binary, saaq, none"
                         .to_string(),
                 );
+            }
+        }
+
+        if let Some(backends) = &self.backend_compatibility {
+            const VALID_BACKEND_KEYS: &[&str] =
+                &["safetensors", "gguf", "goz1", "myelin_accelerator"];
+            for key in backends.keys() {
+                if key == "awq" || key == "gptq" {
+                    return Err(format!(
+                        "backend_compatibility.{} is not supported; use safetensors, gguf, goz1, or myelin_accelerator",
+                        key
+                    ));
+                }
+                if !VALID_BACKEND_KEYS.contains(&key.as_str()) {
+                    return Err(format!(
+                        "backend_compatibility key '{}' is not supported; allowed: safetensors, gguf, goz1, myelin_accelerator",
+                        key
+                    ));
+                }
             }
         }
 
@@ -675,6 +735,129 @@ mod tests {
         let m = Manifest::from_file(path).expect("load goz1 example");
         assert!(m.validate().is_ok());
         assert_eq!(m.generated_artifact.as_ref().unwrap().format, "goz1");
+    }
+
+    #[test]
+    fn test_success_without_path_rejected() {
+        let json = r#"{
+            "metadata": {
+                "schema_version": 1,
+                "created_at": "2026-05-26T00:00:00Z",
+                "manifest_id": "test-success-nopath"
+            },
+            "model": {
+                "slug": "test_model",
+                "name": "Test Model",
+                "family": "test",
+                "parameter_count": {"active": 1000000},
+                "architecture": "dense"
+            },
+            "source_artifact": {
+                "format": "safetensors",
+                "path": "/models/test.safetensors"
+            },
+            "generated_artifact": {
+                "format": "goz1",
+                "status": "success",
+                "version": 1
+            }
+        }"#;
+        let m = Manifest::from_json(json).unwrap();
+        let err = m.validate().unwrap_err();
+        assert!(err.contains("path"));
+    }
+
+    #[test]
+    fn test_goz1_version_must_be_supported() {
+        let json = r#"{
+            "metadata": {
+                "schema_version": 1,
+                "created_at": "2026-05-26T00:00:00Z",
+                "manifest_id": "test-goz1-v2"
+            },
+            "model": {
+                "slug": "test_model",
+                "name": "Test Model",
+                "family": "test",
+                "parameter_count": {"active": 1000000},
+                "architecture": "dense"
+            },
+            "source_artifact": {
+                "format": "safetensors",
+                "path": "/models/test.safetensors"
+            },
+            "generated_artifact": {
+                "format": "goz1",
+                "status": "planned",
+                "version": 2
+            }
+        }"#;
+        let m = Manifest::from_json(json).unwrap();
+        let err = m.validate().unwrap_err();
+        assert!(err.contains("version"));
+    }
+
+    #[test]
+    fn test_tensor_summary_partition_must_sum() {
+        let json = r#"{
+            "metadata": {
+                "schema_version": 1,
+                "created_at": "2026-05-26T00:00:00Z",
+                "manifest_id": "test-tensor-sum"
+            },
+            "model": {
+                "slug": "test_model",
+                "name": "Test Model",
+                "family": "test",
+                "parameter_count": {"active": 1000000},
+                "architecture": "dense"
+            },
+            "source_artifact": {
+                "format": "safetensors",
+                "path": "/models/test.safetensors"
+            },
+            "generated_artifact": {
+                "format": "goz1",
+                "status": "planned",
+                "version": 1,
+                "tensor_summary": {
+                    "tensor_count": 1,
+                    "f16_count": 1,
+                    "ternary_count": 1
+                }
+            }
+        }"#;
+        let m = Manifest::from_json(json).unwrap();
+        let err = m.validate().unwrap_err();
+        assert!(err.contains("tensor_summary") || err.contains("tensor_count"));
+    }
+
+    #[test]
+    fn test_awq_backend_key_rejected() {
+        let json = r#"{
+            "metadata": {
+                "schema_version": 1,
+                "created_at": "2026-05-26T00:00:00Z",
+                "manifest_id": "test-awq-backend"
+            },
+            "model": {
+                "slug": "test_model",
+                "name": "Test Model",
+                "family": "test",
+                "parameter_count": {"active": 1000000},
+                "architecture": "dense"
+            },
+            "source_artifact": {
+                "format": "safetensors",
+                "path": "/models/test.safetensors"
+            },
+            "backend_compatibility": {
+                "awq": {"supported": true, "status": "planned"}
+            }
+        }"#;
+        let m = Manifest::from_json(json).unwrap();
+        let err = m.validate().unwrap_err();
+        assert!(err.contains("awq") || err.contains("not supported"));
     }
 
     #[test]

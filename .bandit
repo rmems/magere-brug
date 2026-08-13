@@ -1,0 +1,5 @@
+# Bandit config for Codacy / local scans.
+# Pytest uses assert intentionally; B101 is noise in unit tests.
+[bandit]
+exclude_dirs = scripts/tests,tests
+skips = B101

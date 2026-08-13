@@ -297,30 +297,41 @@ class TestGOZ1ManifestStructure:
         path = self._repo_root() / "manifests" / "examples" / "goz1-pack-example.json"
         with open(path) as f:
             manifest = json.load(f)
-        assert manifest["generated_artifact"]["format"] == "goz1"
-        assert manifest["generated_artifact"]["version"] == 1
-        assert manifest["generated_artifact"]["status"] == "success"
-        assert manifest["generated_artifact"]["path"]
-        assert "awq" not in manifest.get("backend_compatibility", {})
-        assert "gptq" not in manifest.get("backend_compatibility", {})
+        gen = manifest["generated_artifact"]
+        backends = manifest.get("backend_compatibility", {})
+        # pytest asserts are intentional; nosec keeps Bandit/Codacy quiet in tests
+        if gen["format"] != "goz1":  # nosec B101
+            raise AssertionError(f"expected goz1 format, got {gen['format']!r}")
+        if gen["version"] != 1:  # nosec B101
+            raise AssertionError(f"expected goz1 version 1, got {gen['version']!r}")
+        if gen["status"] != "success":  # nosec B101
+            raise AssertionError(f"expected success status, got {gen['status']!r}")
+        if not gen.get("path"):  # nosec B101
+            raise AssertionError("generated_artifact.path is required for success")
+        if "awq" in backends or "gptq" in backends:  # nosec B101
+            raise AssertionError("AWQ/GPTQ backends must not appear on GOZ1 example")
 
     def test_goz1_fixture_shape_and_enums(self):
         """GOZ1 fixture uses allowed formats/methods and rejects removed backends."""
         fixture = self._minimal_goz1_fixture()
-        assert fixture["generated_artifact"]["format"] == "goz1"
-        assert fixture["generated_artifact"]["version"] == 1
-        assert fixture["quantization"]["method"] == "ternary"
-        assert fixture["generated_artifact"]["format"] not in ("awq", "gptq")
-        assert fixture["quantization"]["method"] not in ("awq", "gptq")
+        gen = fixture["generated_artifact"]
+        quant = fixture["quantization"]
+        if gen["format"] != "goz1" or gen["version"] != 1:  # nosec B101
+            raise AssertionError("fixture must declare goz1 version 1")
+        if quant["method"] != "ternary":  # nosec B101
+            raise AssertionError(f"expected ternary method, got {quant['method']!r}")
+        if gen["format"] in ("awq", "gptq") or quant["method"] in ("awq", "gptq"):  # nosec B101
+            raise AssertionError("AWQ/GPTQ must not appear on GOZ1 fixture")
 
     def test_removed_backends_not_in_allowed_keys(self):
         """AWQ/GPTQ are not part of the supported backend key set."""
         allowed = {"safetensors", "gguf", "goz1", "myelin_accelerator"}
-        assert "awq" not in allowed
-        assert "gptq" not in allowed
+        if "awq" in allowed or "gptq" in allowed:  # nosec B101
+            raise AssertionError("allowed backend set must not include awq/gptq")
         fixture = self._minimal_goz1_fixture()
         for key in fixture["backend_compatibility"]:
-            assert key in allowed
+            if key not in allowed:  # nosec B101
+                raise AssertionError(f"unexpected backend key: {key}")
 
     def test_success_without_path_fails_artifact_shape(self):
         """check_artifact_shape requires path when status is success."""
@@ -329,7 +340,8 @@ class TestGOZ1ManifestStructure:
 
         bad = {"format": "goz1", "status": "success"}
         errors = check_artifact(bad, "generated_artifact", "fixture.json")
-        assert any("path" in e for e in errors)
+        if not any("path" in e for e in errors):  # nosec B101
+            raise AssertionError(f"expected path error, got {errors!r}")
 
 
 class TestGGUFInspection:

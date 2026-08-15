@@ -338,7 +338,7 @@ A manifest guarantees model reproducibility if:
 ### Example Reproducibility Chain
 
 ```
-Source Artifact for packing (safetensors | local_dir → InputFormat::npy_dir)
+Source Artifact for packing (safetensors | local_dir → InputFormat::NpyDir)
   ↓ [magere verify <artifact> <sha256>]
 Ternary pack via magere-grok-process (skeleton: header/table layout; tensor load TBD)
   ↓ [GOZ1 magic, version 1 required on successful packs, tensor table]

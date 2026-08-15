@@ -339,7 +339,12 @@ impl Manifest {
                         summary.ternary_count,
                     )
                 {
-                    let sum = f16.saturating_add(ternary);
+                    let sum = f16.checked_add(ternary).ok_or_else(|| {
+                        format!(
+                            "generated_artifact.tensor_summary: f16_count ({}) + ternary_count ({}) overflow",
+                            f16, ternary
+                        )
+                    })?;
                     if sum != total {
                         return Err(format!(
                             "generated_artifact.tensor_summary: f16_count ({}) + ternary_count ({}) must equal tensor_count ({})",

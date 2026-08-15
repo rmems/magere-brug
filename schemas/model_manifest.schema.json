@@ -255,7 +255,9 @@
         },
         "version": {
           "type": "integer",
-          "description": "Format version (for goz1, must match GOZ1_VERSION, currently 1)"
+          "minimum": 0,
+          "maximum": 4294967295,
+          "description": "Format version (for goz1, must match GOZ1_VERSION, currently 1). Bounds match Rust u32."
         },
         "checksum": {
           "type": "object",

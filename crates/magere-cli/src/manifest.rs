@@ -324,6 +324,12 @@ impl Manifest {
                             SUPPORTED_GOZ1_VERSION, version
                         ));
                     }
+                    None if generated.status.as_deref() == Some("success") => {
+                        return Err(format!(
+                            "generated_artifact.version is required for successful goz1 artifacts (must be {})",
+                            SUPPORTED_GOZ1_VERSION
+                        ));
+                    }
                     _ => {}
                 }
                 if let Some(summary) = &generated.tensor_summary
@@ -795,6 +801,66 @@ mod tests {
         let m = Manifest::from_json(json).unwrap();
         let err = m.validate().unwrap_err();
         assert!(err.contains("version"));
+    }
+
+    #[test]
+    fn test_success_goz1_without_version_rejected() {
+        let json = r#"{
+            "metadata": {
+                "schema_version": 1,
+                "created_at": "2026-05-26T00:00:00Z",
+                "manifest_id": "test-goz1-no-version"
+            },
+            "model": {
+                "slug": "test_model",
+                "name": "Test Model",
+                "family": "test",
+                "parameter_count": {"active": 1000000},
+                "architecture": "dense"
+            },
+            "source_artifact": {
+                "format": "safetensors",
+                "path": "/models/test.safetensors"
+            },
+            "generated_artifact": {
+                "format": "goz1",
+                "status": "success",
+                "path": "/packs/test.goz1"
+            }
+        }"#;
+        let m = Manifest::from_json(json).unwrap();
+        let err = m.validate().unwrap_err();
+        assert!(err.contains("version"));
+    }
+
+    #[test]
+    fn test_non_goz1_generated_version_not_constrained() {
+        let json = r#"{
+            "metadata": {
+                "schema_version": 1,
+                "created_at": "2026-05-26T00:00:00Z",
+                "manifest_id": "test-gguf-v2"
+            },
+            "model": {
+                "slug": "test_model",
+                "name": "Test Model",
+                "family": "test",
+                "parameter_count": {"active": 1000000},
+                "architecture": "dense"
+            },
+            "source_artifact": {
+                "format": "gguf",
+                "path": "/models/test.gguf"
+            },
+            "generated_artifact": {
+                "format": "gguf",
+                "status": "success",
+                "path": "/models/test.gguf",
+                "version": 2
+            }
+        }"#;
+        let m = Manifest::from_json(json).unwrap();
+        assert!(m.validate().is_ok());
     }
 
     #[test]

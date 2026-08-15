@@ -169,7 +169,7 @@ magere-brug **calls** these backends later when execution is needed; it does not
 
 Primary path: **packable source → ternary pack (`magere-grok-process`) → GOZ1 → SAAQ (`magere-corinth-core`) → handoff (`combine-for-AI`)**. AWQ and GPTQ are not supported.
 
-`magere-grok-process` currently accepts **safetensors** and **npy_dir** as pack inputs (`InputFormat`). GGUF remains a first-class *registry* source format for local routing and SAAQ, but is not a direct packer input yet.
+`magere-grok-process` currently accepts **safetensors** and **npy_dir** as packer `InputFormat`s. NPY directories are recorded in manifests as `source_artifact.format: "local_dir"` (`npy_dir` is **not** a valid `source_artifact.format`) and mapped to `InputFormat::NpyDir` before packing. GGUF remains a first-class *registry* source format for local routing and SAAQ, but is not a direct packer input yet.
 
 ### Recipe registration (thin)
 
@@ -338,10 +338,10 @@ A manifest guarantees model reproducibility if:
 ### Example Reproducibility Chain
 
 ```
-Source Artifact for packing (safetensors | npy_dir)
-  ↓ [checksum verification]
+Source Artifact for packing (safetensors | local_dir → InputFormat::npy_dir)
+  ↓ [magere verify <artifact> <sha256>]
 Ternary pack via magere-grok-process (skeleton: header/table layout; tensor load TBD)
-  ↓ [GOZ1 magic, version 1, tensor table]
+  ↓ [GOZ1 magic, version 1 required on successful packs, tensor table]
 Generated Artifact (GOZ1)
   ↓ [register in manifest: path, checksum, lineage]
 SAAQ validation (magere-corinth-core) — may also start from GGUF registry sources

@@ -255,8 +255,7 @@
         },
         "version": {
           "type": "integer",
-          "description": "Format version (for goz1, must match GOZ1_VERSION, currently 1)",
-          "const": 1
+          "description": "Format version (for goz1, must match GOZ1_VERSION, currently 1)"
         },
         "checksum": {
           "type": "object",
@@ -359,6 +358,32 @@
             ]
           },
           "then": {
+            "properties": {
+              "version": {
+                "const": 1
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "format": {
+                "const": "goz1"
+              },
+              "status": {
+                "const": "success"
+              }
+            },
+            "required": [
+              "format",
+              "status"
+            ]
+          },
+          "then": {
+            "required": [
+              "version"
+            ],
             "properties": {
               "version": {
                 "const": 1

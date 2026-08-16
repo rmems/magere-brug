@@ -20,7 +20,7 @@ pub struct PackHeader {
 impl PackHeader {
     pub fn new(tensor_count: u32, tensor_table_offset: u64) -> Self {
         Self {
-            magic: [b'G', b'O', b'Z', b'1'],
+            magic: *b"GOZ1",
             version: GOZ1_VERSION,
             tensor_count,
             tensor_table_offset,
@@ -137,6 +137,9 @@ pub fn parse_pack(bytes: &[u8]) -> Option<(PackHeader, Vec<PackTensorEntry>)> {
     }
 
     let version = u32::from_le_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]);
+    if version != GOZ1_VERSION {
+        return None;
+    }
     let tensor_count = u32::from_le_bytes([bytes[8], bytes[9], bytes[10], bytes[11]]);
     let tensor_table_offset = u64::from_le_bytes([
         bytes[12], bytes[13], bytes[14], bytes[15], bytes[16], bytes[17], bytes[18], bytes[19],
@@ -258,5 +261,14 @@ mod tests {
     #[test]
     fn parse_rejects_short_input() {
         assert!(parse_pack(b"GOZ").is_none());
+    }
+
+    #[test]
+    fn parse_rejects_unsupported_version() {
+        let mut builder = PackBuilder::new();
+        builder.add_tensor("test".into(), TENSOR_F16, vec![2, 2], vec![1, 2, 3, 4]);
+        let mut packed = builder.finalize().unwrap();
+        packed[4..8].copy_from_slice(&2u32.to_le_bytes());
+        assert!(parse_pack(&packed).is_none());
     }
 }

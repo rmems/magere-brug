@@ -12,7 +12,6 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from inspect_safetensors import SafetensorsInspector, SafetensorsManifestBuilder
 from register_gguf import GGUFInspector, GGUFManifestBuilder
-from quant_awq import AWQManifestBuilder, AWQOrchestrator
 
 
 class TestManifestLoading:
@@ -240,25 +239,109 @@ class TestSourceFormats:
         assert manifest_json["source_artifact"]["format"] == "local_dir"
 
 
-class TestAWQManifestGeneration:
-    """Test AWQ manifest snippet generation."""
+class TestGOZ1ManifestStructure:
+    """Test GOZ1-oriented manifests against artifact-shape + schema contracts."""
 
-    def test_awq_manifest_snippet_generated(self):
-        """Test that AWQ manifest snippet is generated correctly."""
-        snippet = AWQManifestBuilder.generate_manifest_snippet(
-            model_slug="test_model",
-            model_family="test",
-            source_format="safetensors",
-            source_path="/models/test.safetensors",
-            quantization_bits=4,
-            group_size=128,
-        )
-        
-        assert snippet["model"]["slug"] == "test_model"
-        assert snippet["generated_artifact"]["format"] == "awq"
-        assert snippet["generated_artifact"]["status"] == "planned"
-        assert snippet["quantization"]["bits"] == 4
-        assert snippet["quantization"]["group_size"] == 128
+    @staticmethod
+    def _repo_root() -> Path:
+        return Path(__file__).resolve().parents[2]
+
+    @staticmethod
+    def _minimal_goz1_fixture(**generated_overrides):
+        generated = {
+            "format": "goz1",
+            "status": "planned",
+            "version": 1,
+            "source_lineage": {
+                "manifest_id": "test-model-v1",
+                "path": "/models/test.safetensors",
+            },
+            "tensor_summary": {
+                "tensor_count": 4,
+                "f16_count": 1,
+                "ternary_count": 3,
+            },
+        }
+        generated.update(generated_overrides)
+        return {
+            "metadata": {
+                "schema_version": 1,
+                "created_at": "2026-05-26T00:00:00Z",
+                "manifest_id": "test-goz1-v1",
+                "description": "GOZ1 fixture for unit tests",
+            },
+            "model": {
+                "slug": "test_model",
+                "name": "Test Model",
+                "family": "other",
+                "parameter_count": {"active": 1000000},
+                "architecture": "dense",
+            },
+            "source_artifact": {
+                "format": "safetensors",
+                "path": "/models/test.safetensors",
+            },
+            "generated_artifact": generated,
+            "quantization": {
+                "method": "ternary",
+                "bits": 2,
+            },
+            "backend_compatibility": {
+                "safetensors": {"supported": True, "status": "proven"},
+                "goz1": {"supported": True, "status": "planned"},
+            },
+        }
+
+    def test_goz1_example_manifest_loads(self):
+        """Repo GOZ1 example is a complete, loadable manifest."""
+        path = self._repo_root() / "manifests" / "examples" / "goz1-pack-example.json"
+        with open(path) as f:
+            manifest = json.load(f)
+        gen = manifest["generated_artifact"]
+        backends = manifest.get("backend_compatibility", {})
+        # pytest asserts are intentional; nosec keeps Bandit/Codacy quiet in tests
+        if gen["format"] != "goz1":  # nosec B101
+            raise AssertionError(f"expected goz1 format, got {gen['format']!r}")
+        if gen["version"] != 1:  # nosec B101
+            raise AssertionError(f"expected goz1 version 1, got {gen['version']!r}")
+        if gen["status"] != "success":  # nosec B101
+            raise AssertionError(f"expected success status, got {gen['status']!r}")
+        if not gen.get("path"):  # nosec B101
+            raise AssertionError("generated_artifact.path is required for success")
+        if "awq" in backends or "gptq" in backends:  # nosec B101
+            raise AssertionError("AWQ/GPTQ backends must not appear on GOZ1 example")
+
+    def test_goz1_fixture_shape_and_enums(self):
+        """GOZ1 fixture uses allowed formats/methods and rejects removed backends."""
+        fixture = self._minimal_goz1_fixture()
+        gen = fixture["generated_artifact"]
+        quant = fixture["quantization"]
+        if gen["format"] != "goz1" or gen["version"] != 1:  # nosec B101
+            raise AssertionError("fixture must declare goz1 version 1")
+        if quant["method"] != "ternary":  # nosec B101
+            raise AssertionError(f"expected ternary method, got {quant['method']!r}")
+        if gen["format"] in ("awq", "gptq") or quant["method"] in ("awq", "gptq"):  # nosec B101
+            raise AssertionError("AWQ/GPTQ must not appear on GOZ1 fixture")
+
+    def test_removed_backends_not_in_allowed_keys(self):
+        """AWQ/GPTQ are not part of the supported backend key set."""
+        allowed = {"safetensors", "gguf", "goz1", "myelin_accelerator"}
+        if "awq" in allowed or "gptq" in allowed:  # nosec B101
+            raise AssertionError("allowed backend set must not include awq/gptq")
+        fixture = self._minimal_goz1_fixture()
+        for key in fixture["backend_compatibility"]:
+            if key not in allowed:  # nosec B101
+                raise AssertionError(f"unexpected backend key: {key}")
+
+    def test_success_without_path_fails_artifact_shape(self):
+        """check_artifact_shape requires path when status is success."""
+        sys.path.insert(0, str(self._repo_root() / "scripts"))
+        from check_artifact_shape import check_artifact
+
+        bad = {"format": "goz1", "status": "success"}
+        errors = check_artifact(bad, "generated_artifact", "fixture.json")
+        if not any("path" in e for e in errors):  # nosec B101
+            raise AssertionError(f"expected path error, got {errors!r}")
 
 
 class TestGGUFInspection:

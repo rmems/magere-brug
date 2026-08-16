@@ -222,18 +222,20 @@
     },
     "generated_artifact": {
       "type": "object",
-      "description": "Generated artifact tracking (optional, populated after quantization)",
+      "description": "Generated artifact tracking (optional). GOZ1 is the hybrid packed-weight format produced by magere-grok-process (magic GOZ1, ternary + FP16).",
+      "required": [
+        "format"
+      ],
       "properties": {
         "format": {
           "type": "string",
           "enum": [
-            "awq",
+            "goz1",
             "gguf",
-            "gptq",
             "ternary",
             "binary"
           ],
-          "description": "Generated artifact format"
+          "description": "Generated artifact format. Prefer goz1 for hybrid ternary packs."
         },
         "status": {
           "type": "string",
@@ -248,7 +250,14 @@
         },
         "path": {
           "type": "string",
-          "description": "Path to generated artifact"
+          "minLength": 1,
+          "description": "Path to generated artifact (required unless status is planned or skipped)"
+        },
+        "version": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295,
+          "description": "Format version (for goz1, must match GOZ1_VERSION, currently 1). Bounds match Rust u32."
         },
         "checksum": {
           "type": "object",
@@ -270,24 +279,136 @@
           "type": "string",
           "format": "date-time",
           "description": "Generation completion timestamp"
+        },
+        "source_lineage": {
+          "type": "object",
+          "description": "Lineage back to the source artifact or parent manifest",
+          "properties": {
+            "manifest_id": {
+              "type": "string",
+              "description": "Parent manifest identifier"
+            },
+            "path": {
+              "type": "string",
+              "description": "Source artifact path used for packing"
+            },
+            "checksum": {
+              "type": "object",
+              "properties": {
+                "sha256": {
+                  "type": "string"
+                },
+                "md5": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "tensor_summary": {
+          "type": "object",
+          "description": "Summary of tensors in a GOZ1 (or similar) pack",
+          "properties": {
+            "tensor_count": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "f16_count": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Count of FP16 passthrough tensors"
+            },
+            "ternary_count": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Count of ternary-packed tensors"
+            }
+          }
         }
-      }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "enum": [
+                  "success",
+                  "running",
+                  "failed"
+                ]
+              }
+            },
+            "required": [
+              "status"
+            ]
+          },
+          "then": {
+            "required": [
+              "path"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "format": {
+                "const": "goz1"
+              }
+            },
+            "required": [
+              "format"
+            ]
+          },
+          "then": {
+            "properties": {
+              "version": {
+                "const": 1
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "format": {
+                "const": "goz1"
+              },
+              "status": {
+                "const": "success"
+              }
+            },
+            "required": [
+              "format",
+              "status"
+            ]
+          },
+          "then": {
+            "required": [
+              "version"
+            ],
+            "properties": {
+              "version": {
+                "const": 1
+              }
+            }
+          }
+        }
+      ]
     },
     "quantization": {
       "type": "object",
-      "description": "Quantization parameters",
+      "description": "Quantization parameters. Primary path is ternary packing to GOZ1 then SAAQ.",
       "properties": {
         "method": {
           "type": "string",
           "enum": [
-            "awq",
-            "gptq",
             "gguf",
             "ternary",
             "binary",
+            "saaq",
             "none"
           ],
-          "description": "Quantization method"
+          "description": "Quantization method (no AWQ/GPTQ on primary path)"
         },
         "bits": {
           "type": "integer",
@@ -355,25 +476,9 @@
             }
           }
         },
-        "awq": {
+        "goz1": {
           "type": "object",
-          "properties": {
-            "supported": {
-              "type": "boolean"
-            },
-            "status": {
-              "type": "string",
-              "enum": [
-                "proven",
-                "testing",
-                "planned",
-                "not_applicable"
-              ]
-            }
-          }
-        },
-        "gptq": {
-          "type": "object",
+          "description": "GOZ1 packed weights from magere-grok-process",
           "properties": {
             "supported": {
               "type": "boolean"
@@ -413,7 +518,8 @@
             }
           }
         }
-      }
+      },
+      "additionalProperties": false
     },
     "saaq_experiment": {
       "type": "object",

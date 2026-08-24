@@ -68,7 +68,10 @@ pub struct PackRecipe {
     pub pack: Option<PackConfig>,
 }
 
+/// Strict: the schema declares `additionalProperties: false` for this block, and the CLI does
+/// not schema-validate recipes, so serde is the only thing enforcing that contract.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct RecipeInputs {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source_manifest: Option<String>,
@@ -76,7 +79,12 @@ pub struct RecipeInputs {
     pub goz1_ref: Option<String>,
 }
 
+/// Strict, for the same reason as [`RecipeInputs`] -- and one sharper one: every field here
+/// has a silent fallback. A misspelled `manifest_ids` would otherwise be ignored and the run
+/// would quietly adopt the default identity `<source manifest id>-goz1`, writing and
+/// registering an artifact under a name the recipe never asked for.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct RecipeOutputs {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub generated_format: Option<String>,
@@ -296,6 +304,20 @@ pub fn run_pack_recipe(
     let bytes =
         run_quantize(&quantize_config, &dissect).map_err(|e| format!("GOZ1 pack failed: {}", e))?;
 
+    // Load the registry *before* writing anything. An unreadable or malformed registry is a
+    // failure of the whole run, and discovering it after the pack and manifest are on disk
+    // would leave new files behind -- or clobber a previous valid pair -- while registering
+    // nothing.
+    let registry_file = registry_path.unwrap_or_else(|| Path::new("registry.json"));
+    let mut registry = if registry_file.exists() {
+        let content = std::fs::read_to_string(registry_file)
+            .map_err(|e| format!("Failed to read registry: {}", e))?;
+        ArtifactRegistry::from_json(&content)
+            .map_err(|e| format!("Failed to parse registry: {}", e))?
+    } else {
+        ArtifactRegistry::new()
+    };
+
     std::fs::create_dir_all(&output_dir).map_err(|e| {
         format!(
             "Failed to create output dir '{}': {}",
@@ -303,6 +325,7 @@ pub fn run_pack_recipe(
             e
         )
     })?;
+
     write_pack_durably(&pack_path, &bytes)?;
 
     // --- Verify the file we just wrote round-trips as GOZ1 ------------------------------
@@ -329,15 +352,6 @@ pub fn run_pack_recipe(
     })?;
 
     // --- Register -----------------------------------------------------------------------
-    let registry_file = registry_path.unwrap_or_else(|| Path::new("registry.json"));
-    let mut registry = if registry_file.exists() {
-        let content = std::fs::read_to_string(registry_file)
-            .map_err(|e| format!("Failed to read registry: {}", e))?;
-        ArtifactRegistry::from_json(&content)
-            .map_err(|e| format!("Failed to parse registry: {}", e))?
-    } else {
-        ArtifactRegistry::new()
-    };
     // Re-running the same recipe replaces its own entry rather than tripping the registry's
     // unique-slug rule. An entry written by a *different* manifest is left alone so that
     // `register` still raises its collision error: the generated slug derives only from the
@@ -1208,6 +1222,48 @@ mod tests {
         assert_eq!(stats.ternary_count, FIXTURE_TERNARY);
         assert_eq!(stats.f16_count, FIXTURE_F16);
         assert_eq!(stats.size_bytes, bytes.len() as u64);
+    }
+
+    /// A misspelled key used to be ignored, silently adopting the default identity and
+    /// writing/registering an artifact under a name the recipe never asked for.
+    #[test]
+    fn rejects_a_misspelled_outputs_key() {
+        let dir = TempDir::new().unwrap();
+        let mut recipe = base_recipe(&dir.path().join("packs"));
+        let manifest_id = recipe["outputs"]["manifest_id"].take();
+        recipe["outputs"]["manifest_ids"] = manifest_id;
+        let h = harness_from(dir, &recipe);
+
+        let err = run_pack_recipe(&h.recipe_path, Some(&h.registry_path), None).unwrap_err();
+        assert!(err.contains("manifest_ids"), "{}", err);
+        assert!(!h.output_dir.exists(), "nothing may be written");
+    }
+
+    #[test]
+    fn rejects_a_misspelled_inputs_key() {
+        let dir = TempDir::new().unwrap();
+        let mut recipe = base_recipe(&dir.path().join("packs"));
+        let src = recipe["inputs"]["source_manifest"].take();
+        recipe["inputs"]["source_manifests"] = src;
+        let h = harness_from(dir, &recipe);
+
+        let err = run_pack_recipe(&h.recipe_path, Some(&h.registry_path), None).unwrap_err();
+        assert!(err.contains("source_manifests"), "{}", err);
+    }
+
+    /// A malformed registry has to fail before the pack and manifest are written, not after:
+    /// otherwise the run leaves new files behind while registering nothing.
+    #[test]
+    fn a_malformed_registry_fails_before_anything_is_written() {
+        let h = default_harness();
+        fs::write(&h.registry_path, "{ not json").unwrap();
+
+        let err = run_pack_recipe(&h.recipe_path, Some(&h.registry_path), None).unwrap_err();
+        assert!(err.contains("registry"), "{}", err);
+        assert!(
+            !h.output_dir.exists(),
+            "no pack or manifest may be written when the registry is unusable"
+        );
     }
 
     #[test]

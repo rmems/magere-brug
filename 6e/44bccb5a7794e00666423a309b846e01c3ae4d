@@ -1,0 +1,45 @@
+configs/recipes/register-gguf-example.json
+  s_ddc05feec482e2::t_74702a685bafc5 1-22
+configs/recipes/register-safetensors-example.json
+  s_ddc05feec482e2::t_26c15f170815f4 1-30
+crates/magere-grok-process/src/quantizer.rs
+  s_ddc05feec482e2::t_6bb569ed48e655 124-127
+.github/workflows/manifest-validate.yml
+  s_ddc05feec482e2::t_d1cbd26086f9b0 37-52
+configs/recipes/register-local-dir-example.json
+  s_ddc05feec482e2::t_961df3524a2045 1-31
+crates/magere-cli/src/main.rs
+  s_ddc05feec482e2::t_9c062165979f53 3
+  s_ddc05feec482e2::t_3ea0336c8d2481 94-100
+  s_ddc05feec482e2::t_8b680ce86b7b77 256-290
+  s_ddc05feec482e2::t_be20c7d3b790a6 53-57
+docs/ARCHITECTURE.md
+  s_ddc05feec482e2::t_5586bab41cdd07 174,176,178-191,193-273
+  s_ddc05feec482e2::t_625b391251d2cc 482-505
+  s_ddc05feec482e2::t_9a00f6a42ab613 593
+  s_ddc05feec482e2::t_5a683c028ffc4b 605-606
+crates/magere-cli/src/recipe.rs
+  s_ddc05feec482e2::t_6cd661d3a0b515 1090
+  s_ddc05feec482e2::t_f036bc60bbea50 1-1006,1019-1089,1091-1327
+  s_ddc05feec482e2::t_0803976bc40121 1007-1018
+configs/recipes/ternary-pack-goz1-example.json
+  s_ddc05feec482e2::t_7a63a4c70cfcec 1-45
+schemas/recipe.schema.json
+  s_ddc05feec482e2::t_d3b8dd6369cb66 4,10-69,72-77,87,90-95,102-109,111-117,120-125,132,145-150,153-173,175-296,320-321,328-381,399-400,416-420,446-485
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "6e44bccb5a7794e00666423a309b846e01c3ae4d",
+  "prompts": {},
+  "sessions": {
+    "s_ddc05feec482e2": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "bb500915-cbd1-43f7-8b94-3c88ff6ee554",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Raul Montoya Cardenas <montoyaraul34@gmail.com>"
+    }
+  }
+}

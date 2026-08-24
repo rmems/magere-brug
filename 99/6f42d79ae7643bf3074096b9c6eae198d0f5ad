@@ -1,0 +1,48 @@
+configs/recipes/fixtures/grok-mini-dissect.json
+  s_ddc05feec482e2::t_e713a1ca838f68 1-68
+configs/recipes/ternary-pack-example.json
+  s_ddc05feec482e2::t_1b729c59830502 1-3,5-20
+  s_ddc05feec482e2::t_0ba036bba02f99 4
+crates/magere-cli/Cargo.toml
+  s_ddc05feec482e2::t_3ae86ff88d37d7 22
+docs/ARCHITECTURE.md
+  s_ddc05feec482e2::t_39007e37807d65 413-434
+  s_ddc05feec482e2::t_20e82069e30fcc 174,176,182-183,185-203
+  s_ddc05feec482e2::t_d6606bd24f8ce1 17
+  s_ddc05feec482e2::t_cb339b5d8de340 463-465
+  s_ddc05feec482e2::t_6b4237e1cbed80 364,367
+  s_ddc05feec482e2::t_02415da2d53fba 524-525
+  s_ddc05feec482e2::t_998be45f3c408c 537
+schemas/recipe.schema.json
+  s_ddc05feec482e2::t_efac2bcb964ed5 69-109
+  s_ddc05feec482e2::t_99b87af5fae133 197-221
+  s_ddc05feec482e2::t_4fcc2efa06402d 4
+crates/magere-cli/src/main.rs
+  s_ddc05feec482e2::t_7ace1947c4eed2 3
+  s_ddc05feec482e2::t_99ebb10709bcee 103-113
+  s_ddc05feec482e2::t_6a915ebc639236 269-303
+  s_ddc05feec482e2::t_02aa0ffa69b7c4 53-66
+crates/magere-grok-process/src/quantizer.rs
+  s_ddc05feec482e2::t_e8fcf0ca27dfe9 124-127
+crates/magere-cli/src/pack.rs
+  s_ddc05feec482e2::t_ba967537994b80 805-808,810-829,831-835,837-839,842-845
+  s_ddc05feec482e2::t_04c58752531005 1-15,17-40,43-48,50-53,55-107,119-133,136-150,155,162-213,220-287,289-292,295,303-306,308-312,315-338,341-354,359-365,367-422,425-426,429-437,439-454,456-483,485-492,496-518,520-533,535-598,600-614,616-623,625-629,633-635,639-640,642,644-650,652-672,675-701,703-741,745-770,772-780,803-804,809,830,836,840-841,856-860,865-871,874-883,885-892,895-902,905-907,912-917,920-930,932-939,945-952,955-962,965-972,975-983,985-988,991-1019,1021-1023,1025-1027,1036-1037,1042-1053
+  s_ddc05feec482e2::t_ba6df2833b47d5 615
+  s_ddc05feec482e2::t_ffb455e88367c0 16,41-42,49,54,108-118,134-135,151-154,156-161,214-219,288,293-294,296-302,307,313-314,339-340,355-358,366,423-424,427-428,438,455,484,493-495,519,534,599,624,630-632,636-638,641,643,651,673-674,702,742-744,771,781-802,846-855,861-864,872-873,884,893-894,903-904,908-911,918-919,931,940-944,953-954,963-964,973-974,984,989-990,1020,1024,1028-1035,1038-1041
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "996f42d79ae7643bf3074096b9c6eae198d0f5ad",
+  "prompts": {},
+  "sessions": {
+    "s_ddc05feec482e2": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "bb500915-cbd1-43f7-8b94-3c88ff6ee554",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Raul Montoya Cardenas <montoyaraul34@gmail.com>"
+    }
+  }
+}

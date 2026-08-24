@@ -1,0 +1,31 @@
+{
+  "recipe_id": "grok-1-register-local-dir",
+  "type": "register",
+  "description": "Register the Grok-1 local-directory checkpoint as a future ternary pack target. Source-only: no weights are read and nothing is packed by this recipe.",
+  "inputs": {
+    "source_manifest": "manifests/examples/grok-1-future-plan.json",
+    "source_format": "local_dir"
+  },
+  "outputs": {
+    "manifest_id": "grok-1-future-plan-v1",
+    "generated_format": "goz1",
+    "goz1_version": 1,
+    "checksum_algorithm": "sha256",
+    "register": true,
+    "registry_path": "artifacts/registry.json"
+  },
+  "handoff": {
+    "myelin_accelerator": {
+      "enabled": false,
+      "status": "placeholder",
+      "kernel_types": ["ternary", "binary", "saaq"],
+      "notes": "Forward-declared only. Grok-1 kernel execution is owned by myelin-accelerator."
+    },
+    "corinth_canal": {
+      "enabled": false,
+      "status": "placeholder",
+      "kernel_types": ["saaq"],
+      "notes": "Forward-declared only. SAAQ validation reference lives in corinth-canal."
+    }
+  }
+}

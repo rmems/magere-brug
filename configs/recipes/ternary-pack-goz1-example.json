@@ -1,0 +1,45 @@
+{
+  "recipe_id": "redpajama-ternary-pack-goz1",
+  "type": "ternary_pack",
+  "description": "Config shape for a ternary pack that emits a GOZ1 artifact with checksum, version, and lineage. `magere recipe apply` deliberately refuses to execute this; the runner is issue #19 (magere pack-goz1).",
+  "inputs": {
+    "source_manifest": "manifests/examples/redpajama-incite-7b-chat.json",
+    "source_format": "safetensors"
+  },
+  "outputs": {
+    "generated_format": "goz1",
+    "goz1_version": 1,
+    "checksum_algorithm": "sha256",
+    "manifest_id": "redpajama-incite-7b-chat-goz1-v1",
+    "artifact_path": "/packs/redpajama/INCITE-7B-Chat.goz1",
+    "output_dir": "/packs/redpajama",
+    "register": true,
+    "registry_path": "artifacts/registry.json",
+    "lineage": {
+      "parent_manifest_id": "redpajama-incite-7b-chat-v1",
+      "parent_path": "/models/redpajama/INCITE-7B-Chat",
+      "recipe_id": "redpajama-ternary-pack-goz1"
+    }
+  },
+  "calibration": {
+    "dataset": "wikitext-2",
+    "dataset_path": "/datasets/wikitext-2",
+    "config_path": "/configs/quantization/ternary_redpajama_wikitext.json",
+    "sample_count": 512,
+    "seed": 1337
+  },
+  "handoff": {
+    "myelin_accelerator": {
+      "enabled": false,
+      "status": "placeholder",
+      "kernel_types": ["ternary", "binary"],
+      "notes": "Forward-declared only. The emitted GOZ1 pack is the handoff unit; kernels live in myelin-accelerator."
+    },
+    "combine_for_ai": {
+      "enabled": false,
+      "status": "placeholder",
+      "pipeline_id": "redpajama_ternary_goz1_smoke",
+      "notes": "Forward-declared only. Scoring is owned by combine-for-AI."
+    }
+  }
+}

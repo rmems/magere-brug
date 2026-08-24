@@ -1,0 +1,22 @@
+{
+  "recipe_id": "olmoe-register-gguf",
+  "type": "register",
+  "description": "Register the local OLMoE GGUF routing target so later SAAQ runs can reference it. No packing happens here; GGUF is a registry source format, not a packer input.",
+  "inputs": {
+    "source_manifest": "manifests/examples/olmoe-1b-7b-instruct.json",
+    "source_format": "gguf"
+  },
+  "outputs": {
+    "manifest_id": "olmoe-1b-7b-instruct-v1",
+    "register": true,
+    "registry_path": "artifacts/registry.json"
+  },
+  "handoff": {
+    "corinth_canal": {
+      "enabled": false,
+      "status": "placeholder",
+      "kernel_types": ["saaq"],
+      "notes": "Forward-declared only. The reference SAAQ implementation consumes this registration; the runner is issue #8."
+    }
+  }
+}

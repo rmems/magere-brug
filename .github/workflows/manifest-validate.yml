@@ -34,6 +34,22 @@ jobs:
           done
           echo "✓ All manifest examples validated"
 
+      - name: Validate configs/recipes/*.json
+        run: |
+          set -e
+          echo "=== Validating recipe examples ==="
+          shopt -s nullglob
+          recipes=(configs/recipes/*.json)
+          if [ ${#recipes[@]} -eq 0 ]; then
+            echo "✗ No recipes found in configs/recipes"
+            exit 1
+          fi
+          for recipe in "${recipes[@]}"; do
+            echo "Validating: $recipe"
+            ./target/release/magere recipe validate "$recipe"
+          done
+          echo "✓ All recipe examples validated"
+
       - name: Validate configs/models/*.json
         run: |
           set -e

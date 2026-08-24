@@ -425,8 +425,8 @@ The runner:
 1. loads and type-checks the recipe (`goz1_pack` / `ternary_pack` with a `pack` block),
 2. loads and validates the source manifest named by `inputs.source_manifest`,
 3. builds a `QuantizeConfig` from the `pack` block and runs `magere_grok_process::stream::run_quantize`,
-4. writes the returned bytes to `<output_dir>/<outputs.manifest_id>.goz1` (creating the directory),
-5. reads the file back and re-parses it, failing loudly unless the `GOZ1` magic, version `1` and the tensor-table length all round-trip,
+4. writes the returned bytes to `<output_dir>/<outputs.manifest_id>.goz1` (creating the directory) and `fsync`s them to disk, so the read-back that follows cannot be served from the page cache,
+5. reads the file back and compares it **byte for byte** against the buffer that was written, then re-parses it, failing loudly on any mismatch or on an unknown tensor dtype. The byte comparison is the load-bearing half: `parse_pack` validates only the header and the tensor table, and never checks that a table entry's `data_offset + byte_len` lands inside the file. Because the data section is written *after* the table, a tail-truncated pack — the shape an out-of-space or interrupted write actually takes — parses cleanly and reports the full tensor counts. Without the comparison such a file would go on to be checksummed, recorded and registered with nothing downstream able to detect it,
 6. emits `<output_dir>/<outputs.manifest_id>.manifest.json` with a `generated_artifact` recording format, path, SHA256, size, `source_lineage` back to the source manifest, and a `tensor_summary` counted from the file (preserve-tier tensors share the FP16 on-disk encoding and are counted in `f16_count`), and
 7. registers that manifest under the slug `<source slug>_goz1`, replacing its own previous entry when the recipe is re-run.
 

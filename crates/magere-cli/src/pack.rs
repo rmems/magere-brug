@@ -303,11 +303,10 @@ pub fn run_pack_recipe(
             e
         )
     })?;
-    std::fs::write(&pack_path, &bytes)
-        .map_err(|e| format!("Failed to write pack '{}': {}", pack_path.display(), e))?;
+    write_pack_durably(&pack_path, &bytes)?;
 
     // --- Verify the file we just wrote round-trips as GOZ1 ------------------------------
-    let stats = verify_written_pack(&pack_path)?;
+    let stats = verify_written_pack(&pack_path, &bytes)?;
 
     let sha256 = checksum::compute_file_sha256(&pack_path)
         .map_err(|e| format!("Failed to checksum '{}': {}", pack_path.display(), e))?;
@@ -375,9 +374,62 @@ pub fn run_pack_recipe(
 }
 
 /// Read the pack back from disk and assert it is a well-formed GOZ1 file.
-fn verify_written_pack(pack_path: &Path) -> Result<PackStats, String> {
+/// Write the pack and flush it all the way to the device before anyone reads it back.
+///
+/// `std::fs::write` only guarantees the bytes reached the page cache, so a read-back that
+/// follows it can be served from cache and "verify" a file that never landed on disk.
+fn write_pack_durably(pack_path: &Path, bytes: &[u8]) -> Result<(), String> {
+    use std::io::Write;
+
+    let mut file = std::fs::File::create(pack_path)
+        .map_err(|e| format!("Failed to create pack '{}': {}", pack_path.display(), e))?;
+    file.write_all(bytes)
+        .map_err(|e| format!("Failed to write pack '{}': {}", pack_path.display(), e))?;
+    file.sync_all().map_err(|e| {
+        format!(
+            "Failed to flush pack '{}' to disk: {}",
+            pack_path.display(),
+            e
+        )
+    })?;
+    Ok(())
+}
+
+/// Re-read the pack from disk and prove it is exactly what we meant to write.
+///
+/// `expected` is the in-memory buffer the caller just wrote. Comparing against it is what
+/// makes this a real verification: `parse_pack` only walks the header and the tensor table,
+/// and never checks that each entry's `data_offset + byte_len` is inside the file. The data
+/// section is written *after* the table, so a tail-truncated pack -- the shape a partial or
+/// out-of-space write actually takes -- still parses cleanly and reports identical tensor
+/// counts. Without the byte comparison the truncated file would go on to be checksummed,
+/// recorded in the manifest and registered, with nothing downstream able to tell.
+fn verify_written_pack(pack_path: &Path, expected: &[u8]) -> Result<PackStats, String> {
     let written = std::fs::read(pack_path)
         .map_err(|e| format!("Failed to re-read pack '{}': {}", pack_path.display(), e))?;
+
+    if written.len() != expected.len() {
+        return Err(format!(
+            "pack '{}' is {} bytes on disk but {} bytes were written -- the file is truncated \
+             or was modified underneath us; refusing to checksum or register it",
+            pack_path.display(),
+            written.len(),
+            expected.len()
+        ));
+    }
+    if written != expected {
+        let first_diff = written
+            .iter()
+            .zip(expected)
+            .position(|(a, b)| a != b)
+            .unwrap_or(0);
+        return Err(format!(
+            "pack '{}' does not match the bytes that were written (first difference at offset \
+             {}); refusing to checksum or register it",
+            pack_path.display(),
+            first_diff
+        ));
+    }
 
     if !written.starts_with(GOZ1_MAGIC) {
         return Err(format!(
@@ -385,36 +437,18 @@ fn verify_written_pack(pack_path: &Path) -> Result<PackStats, String> {
             pack_path.display()
         ));
     }
+    // `parse_pack` is itself the magic/version/table-structure gate: it returns `None` unless
+    // the magic matches, the version is exactly GOZ1_VERSION, and every tensor-table entry
+    // lies inside the buffer. Re-asserting those after a successful parse would be dead code,
+    // so the only structural claim left to check here is the dtype of each entry.
     let (header, entries) = parse_pack(&written).ok_or_else(|| {
         format!(
-            "pack '{}' did not round-trip through parse_pack",
-            pack_path.display()
+            "pack '{}' did not round-trip through parse_pack: the GOZ1 magic, version {} or \
+             the tensor table did not survive the write",
+            pack_path.display(),
+            GOZ1_VERSION
         )
     })?;
-    if header.magic != *GOZ1_MAGIC {
-        return Err(format!(
-            "pack '{}' has magic {:?}, expected GOZ1",
-            pack_path.display(),
-            header.magic
-        ));
-    }
-    if header.version != GOZ1_VERSION {
-        return Err(format!(
-            "pack '{}' has version {}, expected {}",
-            pack_path.display(),
-            header.version,
-            GOZ1_VERSION
-        ));
-    }
-    if header.tensor_count as usize != entries.len() {
-        return Err(format!(
-            "pack '{}' header claims {} tensors but the table holds {}",
-            pack_path.display(),
-            header.tensor_count,
-            entries.len()
-        ));
-    }
-
     let mut f16_count: u32 = 0;
     let mut ternary_count: u32 = 0;
     for entry in &entries {
@@ -1036,6 +1070,122 @@ mod tests {
         let reloaded = Manifest::from_file(&outcome.manifest_path).expect("reload manifest");
         assert!(reloaded.validate().is_ok());
         assert_eq!(reloaded.metadata.manifest_id, "padded-pack-v1");
+    }
+
+    /// A real GOZ1 pack, produced by the same path the command uses.
+    fn valid_pack_bytes() -> Vec<u8> {
+        let h = default_harness();
+        let outcome = run_pack_recipe(&h.recipe_path, Some(&h.registry_path), None).unwrap();
+        fs::read(&outcome.pack_path).unwrap()
+    }
+
+    /// The regression this whole verification step exists for.
+    ///
+    /// `parse_pack`'s bounds checks all guard the cursor walking the tensor *table*; nothing
+    /// checks that an entry's `data_offset + byte_len` lands inside the file. The data section
+    /// is written after the table, so a tail-truncated pack -- what an out-of-space or
+    /// interrupted write actually produces -- parses cleanly and reports the full tensor
+    /// counts. Only the byte comparison catches it.
+    #[test]
+    fn verify_rejects_a_tail_truncated_pack() {
+        let bytes = valid_pack_bytes();
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("truncated.goz1");
+
+        // Drop the entire data section (FIXTURE_TENSORS placeholder payloads, 4 bytes each).
+        let truncated = &bytes[..bytes.len() - (FIXTURE_TENSORS as usize * 4)];
+        fs::write(&path, truncated).unwrap();
+
+        // The structural parse is entirely happy with this file ...
+        let (header, entries) = parse_pack(truncated).expect("truncated pack still parses");
+        assert_eq!(header.tensor_count, FIXTURE_TENSORS);
+        assert_eq!(entries.len() as u32, FIXTURE_TENSORS);
+
+        // ... so the byte comparison is the only thing standing between a short write and a
+        // checksummed, registered, silently-corrupt artifact.
+        let err = verify_written_pack(&path, &bytes).unwrap_err();
+        assert!(err.contains("truncated"), "{}", err);
+    }
+
+    #[test]
+    fn verify_rejects_a_corrupted_byte() {
+        let bytes = valid_pack_bytes();
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("corrupt.goz1");
+
+        let mut corrupt = bytes.clone();
+        let last = corrupt.len() - 1;
+        corrupt[last] ^= 0xff;
+        fs::write(&path, &corrupt).unwrap();
+
+        let err = verify_written_pack(&path, &bytes).unwrap_err();
+        assert!(err.contains("does not match"), "{}", err);
+        assert!(err.contains(&last.to_string()), "{}", err);
+    }
+
+    #[test]
+    fn verify_rejects_a_pack_without_the_goz1_magic() {
+        let bytes = valid_pack_bytes();
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("nomagic.goz1");
+
+        // `expected` is the clobbered buffer too, so the byte comparison passes and the
+        // magic check is what has to fire.
+        let mut clobbered = bytes.clone();
+        clobbered[..4].copy_from_slice(b"NOPE");
+        fs::write(&path, &clobbered).unwrap();
+
+        let err = verify_written_pack(&path, &clobbered).unwrap_err();
+        assert!(err.contains("GOZ1 magic"), "{}", err);
+    }
+
+    #[test]
+    fn verify_rejects_a_pack_with_the_wrong_version() {
+        let bytes = valid_pack_bytes();
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("badversion.goz1");
+
+        let mut clobbered = bytes.clone();
+        clobbered[4..8].copy_from_slice(&99u32.to_le_bytes());
+        fs::write(&path, &clobbered).unwrap();
+
+        let err = verify_written_pack(&path, &clobbered).unwrap_err();
+        assert!(err.contains("did not round-trip"), "{}", err);
+    }
+
+    #[test]
+    fn verify_rejects_a_pack_with_an_unknown_dtype() {
+        let bytes = valid_pack_bytes();
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("baddtype.goz1");
+
+        // Walk to the first table entry's dtype byte: table offset, u16 name_len, then name.
+        let mut clobbered = bytes.clone();
+        let table_offset = u64::from_le_bytes(clobbered[12..20].try_into().unwrap()) as usize;
+        let name_len = u16::from_le_bytes(
+            clobbered[table_offset..table_offset + 2]
+                .try_into()
+                .unwrap(),
+        ) as usize;
+        clobbered[table_offset + 2 + name_len] = 0x7f;
+        fs::write(&path, &clobbered).unwrap();
+
+        let err = verify_written_pack(&path, &clobbered).unwrap_err();
+        assert!(err.contains("unknown dtype"), "{}", err);
+    }
+
+    #[test]
+    fn verify_accepts_the_pack_the_command_actually_wrote() {
+        let bytes = valid_pack_bytes();
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("good.goz1");
+        fs::write(&path, &bytes).unwrap();
+
+        let stats = verify_written_pack(&path, &bytes).expect("valid pack verifies");
+        assert_eq!(stats.tensor_count, FIXTURE_TENSORS);
+        assert_eq!(stats.ternary_count, FIXTURE_TERNARY);
+        assert_eq!(stats.f16_count, FIXTURE_F16);
+        assert_eq!(stats.size_bytes, bytes.len() as u64);
     }
 
     #[test]

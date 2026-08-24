@@ -1,5 +1,6 @@
 mod checksum;
 mod manifest;
+mod pack;
 mod registry;
 
 use clap::{Parser, Subcommand};
@@ -49,6 +50,20 @@ enum Commands {
         #[arg(value_name = "SHA256")]
         checksum: String,
     },
+    /// Run a ternary_pack/goz1_pack recipe: write a GOZ1 pack, emit its manifest, register it
+    PackGoz1 {
+        /// Path to pack recipe JSON file
+        #[arg(value_name = "RECIPE")]
+        recipe: std::path::PathBuf,
+
+        /// Path to save registry (optional)
+        #[arg(short, long)]
+        registry: Option<std::path::PathBuf>,
+
+        /// Override the recipe's outputs.output_dir
+        #[arg(short, long)]
+        output_dir: Option<std::path::PathBuf>,
+    },
 }
 
 fn main() {
@@ -80,6 +95,17 @@ fn main() {
         },
         Commands::Verify { artifact, checksum } => match verify_command(&artifact, &checksum) {
             Ok(msg) => println!("{}", msg),
+            Err(e) => {
+                eprintln!("Error: {}", e);
+                std::process::exit(1);
+            }
+        },
+        Commands::PackGoz1 {
+            recipe,
+            registry,
+            output_dir,
+        } => match pack::pack_goz1_command(&recipe, registry.as_deref(), output_dir.as_deref()) {
+            Ok(msg) => print!("{}", msg),
             Err(e) => {
                 eprintln!("Error: {}", e);
                 std::process::exit(1);
@@ -239,5 +265,40 @@ mod tests {
         ];
         let cli = Cli::try_parse_from(args);
         assert!(cli.is_ok());
+    }
+
+    #[test]
+    fn test_cli_parser_pack_goz1() {
+        let args = vec![
+            "magere",
+            "pack-goz1",
+            "/path/to/recipe.json",
+            "--registry",
+            "/path/to/registry.json",
+            "--output-dir",
+            "/packs/out",
+        ];
+        let cli = Cli::try_parse_from(args).expect("pack-goz1 args parse");
+        match cli.command {
+            Commands::PackGoz1 {
+                recipe,
+                registry,
+                output_dir,
+            } => {
+                assert_eq!(recipe, Path::new("/path/to/recipe.json"));
+                assert_eq!(
+                    registry.as_deref(),
+                    Some(Path::new("/path/to/registry.json"))
+                );
+                assert_eq!(output_dir.as_deref(), Some(Path::new("/packs/out")));
+            }
+            _ => panic!("expected PackGoz1"),
+        }
+    }
+
+    #[test]
+    fn test_cli_parser_pack_goz1_requires_recipe() {
+        let cli = Cli::try_parse_from(vec!["magere", "pack-goz1"]);
+        assert!(cli.is_err());
     }
 }

@@ -14,7 +14,7 @@ This is **not** a general model-training framework. For model training, see `rme
 
 The Rust workspace owns:
 
-- **`magere-cli`** — Manifest validation, artifact registry, checksums, path normalization, run metadata, and handoff files.
+- **`magere-cli`** — Manifest validation, artifact registry, checksums, path normalization, run metadata, handoff files, and the recipe-driven GOZ1 pack runner (`magere pack-goz1`).
 - **`magere-corinth-core`** — CPU-only SNN pipeline components (`TelemetryEncoder`, `SparseGifHiddenLayer`, `Projector`, `SnnLatentCalibrator`) used for SAAQ validation.
 - **`magere-grok-process`** — Grok-1 specific weight packing, ternary quantization, and manifest parsing utilities.
 - **`magere-bridge`** — Placeholder/WIP crate for future cross-crate glue or external bridge logic. Currently a minimal binary stub.
@@ -171,16 +171,36 @@ Primary path: **packable source → ternary pack (`magere-grok-process`) → GOZ
 
 `magere-grok-process` currently accepts **safetensors** and **npy_dir** as packer `InputFormat`s. NPY directories are recorded in manifests as `source_artifact.format: "local_dir"` (`npy_dir` is **not** a valid `source_artifact.format`) and mapped to `InputFormat::NpyDir` before packing. GGUF remains a first-class *registry* source format for local routing and SAAQ, but is not a direct packer input yet.
 
-### Recipe registration (thin)
+### Recipes
 
-`schemas/recipe.schema.json` defines recipe stubs that reference manifests and GOZ1 packs without implementing runners:
+`schemas/recipe.schema.json` defines recipes that reference manifests and GOZ1 packs:
 
 - `type`: `register` | `goz1_pack` | `ternary_pack` | `saaq`
 - `inputs.source_manifest` — path or registry id of the source manifest
 - `inputs.goz1_ref` — path or registry id of a registered GOZ1 pack
 - `outputs.generated_format` — prefer `goz1`
+- `outputs.manifest_id` — id of the manifest to write after the recipe
+- `outputs.output_dir` — directory for pack or SAAQ run outputs
 
-Example: `configs/recipes/goz1-ref-example.json`. Packing CLI is tracked separately; SAAQ runner is tracked separately.
+A recipe without a `pack` block is reference-only (example: `configs/recipes/goz1-ref-example.json`). The SAAQ runner is tracked separately.
+
+#### The `pack` block
+
+`goz1_pack` / `ternary_pack` recipes become **executable** by adding a `pack` block, which maps onto `magere-grok-process`'s `QuantizeConfig`:
+
+| Field | Required | Default | Role |
+|-------|----------|---------|------|
+| `dissect_manifest` | yes | — | Path to the xai-dissect `DissectManifest` JSON (`schema_version` 1, `name_convention` `xai-dissect-v1`) listing the `preserve` / `fp16` / `ternary_candidates` tiers |
+| `input_dir` | no | source manifest's `source_artifact.path` | Directory holding the packable source weights |
+| `input_format` | no | mapped from `source_artifact.format` (`safetensors` → `safetensors`, `local_dir` → `npy_dir`) | `safetensors` or `npy_dir` |
+| `gif_threshold` | no | `0.05` | GIF saliency threshold ratio, in `[0.0, 1.0]` |
+| `use_embedded_baseline` | no | `false` | Use the packer's embedded baseline statistics |
+
+The schema keeps `pack` optional (reference-only stubs stay valid) but rejects a `pack` block on a non-packing recipe type, and rejects `outputs.generated_format` other than `goz1` alongside one. `magere pack-goz1` additionally requires the block at run time. Paths inside a recipe are resolved against the **current working directory**, so repo-relative recipes such as `configs/recipes/ternary-pack-example.json` are meant to be run from the repository root.
+
+Since GGUF and `hf_repo` are registry source formats but not packer inputs, recipes whose source manifest uses them must name `pack.input_format` explicitly.
+
+Example: `configs/recipes/ternary-pack-example.json`, with the small dissect-manifest fixture it consumes at `configs/recipes/fixtures/grok-mini-dissect.json`.
 
 ---
 
@@ -341,9 +361,10 @@ A manifest guarantees model reproducibility if:
 Source Artifact for packing (safetensors | local_dir → InputFormat::NpyDir)
   ↓ [magere verify <artifact> <sha256>]
 Ternary pack via magere-grok-process (skeleton: header/table layout; tensor load TBD)
+  ↓ [magere pack-goz1 <recipe.json>]
   ↓ [GOZ1 magic, version 1 required on successful packs, tensor table]
 Generated Artifact (GOZ1)
-  ↓ [register in manifest: path, checksum, lineage]
+  ↓ [register in manifest: path, checksum, lineage — status "planned" while the packer is a skeleton]
 SAAQ validation (magere-corinth-core) — may also start from GGUF registry sources
   ↓ [latent telemetry CSV + run manifest]
 Benchmark / reporting (combine-for-AI)
@@ -389,6 +410,28 @@ cargo run --bin magere -- verify /models/olmoe/OLMoE-1B-7B-0125-Instruct-F16.ggu
 
 **Output:** ✓ Checksum verified or ✗ Checksum mismatch
 
+### Pack a GOZ1 Artifact from a Recipe
+
+```bash
+cargo run --bin magere -- pack-goz1 configs/recipes/ternary-pack-example.json \
+  --output-dir /packs/redpajama \
+  --registry configs/models/registry.json
+```
+
+`--output-dir` overrides the recipe's `outputs.output_dir`; `--registry` defaults to `registry.json` in the working directory. Run the command from the repository root so the recipe's relative paths resolve.
+
+The runner:
+
+1. loads and type-checks the recipe (`goz1_pack` / `ternary_pack` with a `pack` block),
+2. loads and validates the source manifest named by `inputs.source_manifest`,
+3. builds a `QuantizeConfig` from the `pack` block and runs `magere_grok_process::stream::run_quantize`,
+4. writes the returned bytes to `<output_dir>/<outputs.manifest_id>.goz1` (creating the directory),
+5. reads the file back and re-parses it, failing loudly unless the `GOZ1` magic, version `1` and the tensor-table length all round-trip,
+6. emits `<output_dir>/<outputs.manifest_id>.manifest.json` with a `generated_artifact` recording format, path, SHA256, size, `source_lineage` back to the source manifest, and a `tensor_summary` counted from the file (preserve-tier tensors share the FP16 on-disk encoding and are counted in `f16_count`), and
+7. registers that manifest under the slug `<source slug>_goz1`, replacing its own previous entry when the recipe is re-run.
+
+> **Skeleton caveat.** `run_quantize` does not load real tensor weights yet: it emits a 4-byte placeholder payload with a placeholder `[1, 1]` shape per tensor. The result is a structurally valid GOZ1 *shell*, not a checkpoint. The CLI says so on every run, and the emitted `generated_artifact.status` is deliberately **`planned`** — the only value in the schema's status enum that does not assert a finished artifact while still allowing `path` and `checksum` to be recorded. The same notice is copied verbatim into the emitted `metadata.description`. Nothing downstream (SAAQ, `myelin-accelerator`, `combine-for-AI`) may consume these files as weights until real tensor loading lands in `magere-grok-process`.
+
 ---
 
 ## Python Helper Scripts
@@ -417,7 +460,9 @@ python scripts/register_gguf.py /models/olmoe/OLMoE-1B-7B-0125-Instruct-F16.gguf
 
 ### GOZ1 packing (Rust)
 
-**`magere-grok-process`** owns the GOZ1 layout (magic, version, tensor table, stream/pack builders). The end-to-end packer (`run_quantize`) is still a **skeleton**: it builds a structurally valid pack shell but does not yet load real tensor weights (placeholder shapes/data). Do not treat skeleton output as a production checkpoint. Recipe-driven pack CLI is tracked separately; manifests register completed GOZ1 packs as first-class `generated_artifact` entries when a real pack path exists.
+**`magere-grok-process`** owns the GOZ1 layout (magic, version, tensor table, stream/pack builders). The end-to-end packer (`run_quantize`) is still a **skeleton**: it builds a structurally valid pack shell but does not yet load real tensor weights (placeholder shapes/data). Do not treat skeleton output as a production checkpoint.
+
+`magere pack-goz1` (in `magere-cli`, see [Pack a GOZ1 Artifact from a Recipe](#pack-a-goz1-artifact-from-a-recipe)) is the recipe-driven wiring on top of it: recipe → `QuantizeConfig` → `run_quantize` → GOZ1 file → verify → manifest → registry. It inherits the skeleton caveat and records `generated_artifact.status: "planned"` accordingly; manifests register completed GOZ1 packs with `status: "success"` only once a real pack path exists.
 
 ### Unit Tests
 
@@ -476,7 +521,8 @@ Manifests track SAAQ experiment metadata:
 - ✓ Rust CLI skeleton (parsing, validation, registry)
 - ✓ Python helper script stubs (GGUF/safetensors inspection)
 - ✓ Example manifests (including GOZ1 pack example)
-- ✓ Thin recipe schema for GOZ1 refs
+- ✓ Recipe schema for GOZ1 refs, plus an executable `pack` block
+- ✓ Recipe-driven ternary pack → GOZ1 via `magere pack-goz1` (skeleton payloads; see caveat above)
 - ✓ Batch A/B structure + Cloud stubs
 - ✓ Documentation (primary path ternary → GOZ1 → SAAQ)
 
@@ -488,7 +534,7 @@ Manifests track SAAQ experiment metadata:
 
 ### Next pipeline work
 
-- Recipe-driven ternary pack → GOZ1 via `magere-grok-process`
+- Real tensor loading in `magere-grok-process::stream::run_quantize` (until then `magere pack-goz1` emits placeholder payloads and `status: "planned"`)
 - Recipe-driven SAAQ runner on top of registered GOZ1 / source artifacts
 - myelin-accelerator kernel invocation from handoff manifests
 - Cloud backend integration (NIM, Vertex AI, etc.) when needed

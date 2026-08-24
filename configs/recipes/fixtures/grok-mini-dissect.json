@@ -1,0 +1,68 @@
+{
+  "schema_version": 1,
+  "name_convention": "xai-dissect-v1",
+  "model": {
+    "family": "grok",
+    "name": "grok-mini-fixture",
+    "total_params": 1048576,
+    "vocab_size": 1024,
+    "hidden_dim": 64,
+    "num_experts": 2,
+    "num_layers": 2,
+    "num_blocks": 2
+  },
+  "produced_by": {
+    "tool": "xai-dissect",
+    "version": "0.1.0",
+    "timestamp": "2026-08-01T00:00:00Z"
+  },
+  "defaults": {
+    "router_precision": "preserve",
+    "norm_precision": "fp16",
+    "expert_precision": "ternary_snn"
+  },
+  "preserve": [
+    {
+      "name": "router",
+      "reason": "routing-critical: MoE gate logits must stay exact"
+    }
+  ],
+  "fp16": [
+    {
+      "name": "norm",
+      "reason": "numerical-stability: layer norms are ternary-hostile"
+    }
+  ],
+  "ternary_candidates": [
+    {
+      "name": "blk.0.attn.q_proj.weight",
+      "block": 0,
+      "slot": null
+    },
+    {
+      "name": "blk.0.attn.k_proj.weight",
+      "block": 0,
+      "slot": null
+    },
+    {
+      "name": "blk.0.ffn.expert_0.w1.weight",
+      "block": 0,
+      "slot": 0
+    },
+    {
+      "name": "blk.0.attn_norm.weight",
+      "block": 0,
+      "slot": null
+    },
+    {
+      "name": "blk.0.router.weight",
+      "block": 0,
+      "slot": null
+    },
+    {
+      "name": "blk.1.ffn_norm.weight",
+      "block": 1,
+      "slot": null
+    }
+  ]
+}

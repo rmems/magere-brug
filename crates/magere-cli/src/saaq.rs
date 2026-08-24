@@ -583,6 +583,33 @@ fn parse_telemetry(raw: RawTelemetry, recipe_path: &Path) -> Result<TelemetrySou
                     ));
                 }
             }
+            // Finite `start` and `delta` do not make the ramp finite: with both
+            // at 3e38, tick 1 is already infinity, which would be stored as the
+            // encoder baseline and written to the latent CSV. The last tick has
+            // the largest magnitude, so checking it covers the whole ramp — and
+            // keeps the synthetic source symmetric with the finiteness the CSV
+            // source now enforces on the values it reads.
+            let last = synthetic_snapshot(
+                &SyntheticTelemetry {
+                    ticks,
+                    tick_interval_ms,
+                    start_timestamp_ms,
+                    start,
+                    delta,
+                },
+                ticks - 1,
+            );
+            if !last.gpu_temp_c.is_finite()
+                || !last.gpu_power_w.is_finite()
+                || !last.cpu_tctl_c.is_finite()
+                || !last.cpu_package_power_w.is_finite()
+            {
+                return Err(format!(
+                    "saaq.telemetry ramp overflows to a non-finite value by tick {}: \
+                     each channel's start + delta * tick must stay finite",
+                    ticks - 1
+                ));
+            }
             Ok(TelemetrySource::Synthetic(SyntheticTelemetry {
                 ticks,
                 tick_interval_ms,
@@ -1647,6 +1674,17 @@ mod tests {
         );
         let expected = checksum::compute_file_sha256(example_manifest()).unwrap();
         assert_eq!(digest, expected);
+    }
+
+    #[test]
+    fn rejects_synthetic_ramps_that_overflow_to_infinity() {
+        let out = TempDir::new().unwrap();
+        // start and delta are each finite, but tick 1 is already infinity.
+        let json = recipe_json(4, "")
+            .replace("\"gpu_temp_c\": 58.0", "\"gpu_temp_c\": 3e38")
+            .replace("\"gpu_temp_c\": 0.6", "\"gpu_temp_c\": 3e38");
+        let error = config_from(&json, out.path()).unwrap_err();
+        assert!(error.contains("non-finite"), "unexpected error: {error}");
     }
 
     #[test]

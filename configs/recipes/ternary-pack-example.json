@@ -1,19 +1,19 @@
 {
-  "recipe_id": "redpajama-ternary-pack-example",
+  "recipe_id": "grok-1-ternary-pack-example",
   "type": "ternary_pack",
-  "description": "Runnable example for `magere pack-goz1`: packs the mini dissect-manifest fixture into a GOZ1 shell. Run from the repository root; writes to the repo-relative artifacts/packs/ (gitignored), so it works as-is without root or a writable /packs.",
+  "description": "Runnable example for `magere pack-goz1`: packs the mini Grok dissect-manifest fixture into a GOZ1 shell. The source manifest is a Grok-1 MoE checkpoint so the model identity recorded in the emitted manifest matches the fixture's tensor table. Run from the repository root; writes to the repo-relative artifacts/packs/ (gitignored), so it works as-is without root or a writable /packs.",
   "inputs": {
-    "source_manifest": "manifests/examples/redpajama-incite-7b-chat.json"
+    "source_manifest": "manifests/examples/grok-1-future-plan.json"
   },
   "outputs": {
     "generated_format": "goz1",
-    "manifest_id": "redpajama-incite-7b-chat-goz1-v1",
+    "manifest_id": "grok-1-goz1-pack-example-v1",
     "output_dir": "artifacts/packs"
   },
   "pack": {
     "dissect_manifest": "configs/recipes/fixtures/grok-mini-dissect.json",
-    "input_dir": "/models/redpajama/INCITE-7B-Chat",
-    "input_format": "safetensors",
+    "input_dir": "/models/grok-1",
+    "input_format": "npy_dir",
     "gif_threshold": 0.05,
     "use_embedded_baseline": false
   }

@@ -202,7 +202,11 @@ The schema keeps `pack` optional (reference-only stubs stay valid) but rejects a
 
 Since GGUF and `hf_repo` are registry source formats but not packer inputs, recipes whose source manifest uses them must name `pack.input_format` explicitly.
 
-Example: `configs/recipes/ternary-pack-example.json`, with the small dissect-manifest fixture it consumes at `configs/recipes/fixtures/grok-mini-dissect.json`.
+Example: `configs/recipes/ternary-pack-example.json`, with the small dissect-manifest fixture it
+consumes at `configs/recipes/fixtures/grok-mini-dissect.json`. The example's source manifest is a
+Grok-1 MoE checkpoint so the model identity recorded in the emitted manifest matches the family the
+fixture's tensor table describes — pairing a fixture with an unrelated source manifest would register
+an artifact claiming to be one model whose contents are another.
 
 ---
 

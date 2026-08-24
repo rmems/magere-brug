@@ -921,7 +921,7 @@ mod tests {
         let recipe = load_pack_recipe(Path::new(EXAMPLE_RECIPE)).expect("example recipe parses");
         assert_eq!(recipe.recipe_type, "ternary_pack");
         let pack = recipe.pack.as_ref().expect("example carries a pack block");
-        assert_eq!(pack.input_format, Some(InputFormat::Safetensors));
+        assert_eq!(pack.input_format, Some(InputFormat::NpyDir));
 
         let root = Path::new(REPO_ROOT);
         let source_manifest = root.join(
@@ -937,6 +937,27 @@ mod tests {
         assert!(source_manifest.exists(), "{}", source_manifest.display());
         assert!(dissect.exists(), "{}", dissect.display());
 
+        // The emitted manifest inherits the source manifest's model identity while its
+        // tensor table comes from the dissect fixture. If those disagree the example
+        // registers an artifact claiming to be one model whose contents are another --
+        // pin them together so the shipped pairing cannot drift back apart.
+        let source_family = Manifest::from_file(&source_manifest)
+            .expect("source manifest parses")
+            .model
+            .family;
+        let dissect_family = serde_json::from_str::<serde_json::Value>(
+            &fs::read_to_string(&dissect).expect("dissect fixture is readable"),
+        )
+        .expect("dissect fixture is JSON")["model"]["family"]
+            .as_str()
+            .expect("dissect fixture names a model family")
+            .to_string();
+        assert_eq!(
+            source_family, dissect_family,
+            "shipped example pairs a '{source_family}' source manifest with a \
+             '{dissect_family}' dissect fixture"
+        );
+
         let dir = TempDir::new().unwrap();
         let mut as_absolute: serde_json::Value =
             serde_json::from_str(&fs::read_to_string(EXAMPLE_RECIPE).unwrap()).unwrap();
@@ -951,7 +972,7 @@ mod tests {
         assert_eq!(outcome.tensor_count, FIXTURE_TENSORS);
         assert_eq!(
             outcome.pack_path,
-            dir.path().join("redpajama-incite-7b-chat-goz1-v1.goz1")
+            dir.path().join("grok-1-goz1-pack-example-v1.goz1")
         );
         assert_eq!(
             outcome

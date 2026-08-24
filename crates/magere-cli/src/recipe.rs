@@ -524,6 +524,14 @@ impl Recipe {
             ));
         }
 
+        if outputs.register == Some(false) && self.recipe_type == RecipeType::Register {
+            return Err(
+                "a register recipe exists to add its source manifest to the artifact registry, \
+                 so outputs.register must not be false"
+                    .to_string(),
+            );
+        }
+
         if outputs.register == Some(true) && self.recipe_type.is_pack() {
             if outputs.manifest_id.is_none() {
                 return Err(
@@ -690,6 +698,21 @@ impl Recipe {
             return Err(format!(
                 "recipe '{}': inputs.source_manifest '{reference}' looks like a registry id; \
                  `magere recipe apply` needs a manifest path (a *.json file)",
+                self.recipe_id
+            ));
+        }
+
+        // `outputs.register` defaults to true for a register recipe: the type exists to
+        // add its source manifest to the registry. `validate_outputs` rejects an explicit
+        // `false` as contradictory, so this guard only fires if a caller skips validation.
+        let should_register = self
+            .outputs
+            .as_ref()
+            .and_then(|outputs| outputs.register)
+            .unwrap_or(true);
+        if !should_register {
+            return Err(format!(
+                "recipe '{}': outputs.register is false, so there is nothing to apply",
                 self.recipe_id
             ));
         }
@@ -1211,6 +1234,46 @@ mod tests {
         );
         let err = recipe.validate().expect_err("must be rejected");
         assert!(err.contains("lineage"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn test_register_recipe_rejects_register_false() {
+        let (_dir, recipe) = recipe_in_temp_dir(
+            r#"{
+              "recipe_id": "register-disabled",
+              "type": "register",
+              "inputs": { "source_manifest": "manifest.json" },
+              "outputs": { "register": false }
+            }"#,
+            &sample_manifest_json("sample-v1", "sample_model", "safetensors"),
+        );
+
+        let err = recipe
+            .validate()
+            .expect_err("outputs.register false must be rejected on a register recipe");
+        assert!(err.contains("outputs.register must not be false"), "{err}");
+    }
+
+    #[test]
+    fn test_apply_register_false_writes_no_registry() {
+        let (dir, recipe) = recipe_in_temp_dir(
+            r#"{
+              "recipe_id": "register-disabled-apply",
+              "type": "register",
+              "inputs": { "source_manifest": "manifest.json" },
+              "outputs": { "register": false }
+            }"#,
+            &sample_manifest_json("sample-v1", "sample_model", "safetensors"),
+        );
+
+        let registry_path = dir.path().join("registry.json");
+        recipe
+            .apply(Some(&registry_path))
+            .expect_err("a register recipe declaring register:false must not apply");
+        assert!(
+            !registry_path.exists(),
+            "registry was written despite outputs.register being false"
+        );
     }
 
     #[test]

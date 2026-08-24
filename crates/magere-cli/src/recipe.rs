@@ -25,9 +25,6 @@ use std::path::{Path, PathBuf};
 /// the working directory to find `schemas/recipe.schema.json`.
 const RECIPE_SCHEMA: &str = include_str!("../../../schemas/recipe.schema.json");
 
-/// Quantization paths removed from this repo. Rejected anywhere in a recipe.
-const REMOVED_QUANT_PATHS: &[&str] = &["awq", "gptq"];
-
 /// GOZ1 pack format version written by `magere-grok-process`.
 const SUPPORTED_GOZ1_VERSION: u32 = 1;
 
@@ -255,13 +252,14 @@ impl Recipe {
 
     /// Validate the recipe against `schemas/recipe.schema.json`, then apply the
     /// semantic checks the schema cannot express (manifest references resolve
-    /// and parse, cross-field consistency, removed-path rejection).
+    /// and parse, cross-field consistency). AWQ/GPTQ rejection is enforced by the
+    /// schema itself: every string leaf is a `safe_string` (which pattern-bans them)
+    /// or a closed enum, and unknown keys are refused by `additionalProperties: false`.
     pub fn validate(&self) -> Result<(), String> {
         let instance = serde_json::to_value(self)
             .map_err(|e| format!("failed to serialize recipe for validation: {e}"))?;
 
         validate_against_schema(&instance)?;
-        scan_for_removed_paths(&instance, "recipe")?;
         self.validate_semantics()
     }
 
@@ -435,6 +433,19 @@ impl Recipe {
                         "recipe type 'saaq' requires inputs.source_manifest or inputs.goz1_ref"
                             .to_string(),
                     );
+                }
+                // Mirrors the schema's `saaq` branch so the semantic layer stands alone.
+                match self.outputs.as_ref() {
+                    None => {
+                        return Err("recipe type 'saaq' requires outputs".to_string());
+                    }
+                    Some(outputs) if outputs.output_dir.is_none() => {
+                        return Err(
+                            "recipe type 'saaq' requires outputs.output_dir to place the run"
+                                .to_string(),
+                        );
+                    }
+                    Some(_) => {}
                 }
             }
         }
@@ -625,6 +636,9 @@ impl Recipe {
             }
 
             if self.recipe_type.is_pack() {
+                // The declared `inputs.source_format` is optional, so the manifest the
+                // recipe actually points at is the authoritative source format here.
+                self.reject_unpackable_source_format(&manifest.source_artifact.format)?;
                 self.validate_pack_lineage(&manifest)?;
             }
 
@@ -692,16 +706,22 @@ impl Recipe {
         Ok(())
     }
 
-    /// Load a manifest reference. Returns `Ok(None)` when the reference is a
-    /// registry id rather than a `*.json` path (registry ids are resolved by the
-    /// registry, not the filesystem).
+    /// Load a manifest reference.
+    ///
+    /// Every reference must name a `*.json` manifest path. Nothing in this
+    /// workspace resolves registry ids yet — `apply` rejects them outright — so a
+    /// non-path reference is a typo, not a feature, and is refused rather than
+    /// silently skipping every cross-check below.
     fn load_referenced_manifest(
         &self,
         reference: &str,
         label: &str,
     ) -> Result<Option<Manifest>, String> {
         if !reference_is_manifest_path(reference) {
-            return Ok(None);
+            return Err(format!(
+                "{label} '{reference}' must name a manifest path ending in '.json'; \
+                 registry-id references are not resolvable yet (see issues #19/#8)"
+            ));
         }
 
         let resolved = self.resolve_reference(reference).ok_or_else(|| {
@@ -918,35 +938,6 @@ fn validate_against_schema(instance: &Value) -> Result<(), String> {
     }
 }
 
-/// Reject AWQ/GPTQ anywhere in a recipe: keys, values, array items.
-fn scan_for_removed_paths(value: &Value, location: &str) -> Result<(), String> {
-    match value {
-        Value::String(text) => check_removed_path(location, text),
-        Value::Array(items) => items.iter().enumerate().try_for_each(|(index, item)| {
-            scan_for_removed_paths(item, &format!("{location}[{index}]"))
-        }),
-        Value::Object(map) => map.iter().try_for_each(|(key, item)| {
-            let child = format!("{location}.{key}");
-            check_removed_path(&child, key)?;
-            scan_for_removed_paths(item, &child)
-        }),
-        _ => Ok(()),
-    }
-}
-
-fn check_removed_path(location: &str, text: &str) -> Result<(), String> {
-    let lowered = text.to_ascii_lowercase();
-    for removed in REMOVED_QUANT_PATHS {
-        if lowered.contains(removed) {
-            return Err(format!(
-                "{location} references the removed '{removed}' quantization path; \
-                 the primary path is packable source -> ternary pack -> GOZ1 -> SAAQ"
-            ));
-        }
-    }
-    Ok(())
-}
-
 /// Dispatch for `magere recipe <...>`.
 pub fn run(command: RecipeCommands) -> Result<String, String> {
     match command {
@@ -1156,11 +1147,14 @@ mod tests {
 
     #[test]
     fn test_awq_and_gptq_are_rejected() {
-        for removed in ["awq", "gptq"] {
+        // The ban lives in the schema's `safe_string` pattern, so it must fire on a
+        // free-text field and report a schema failure, not merely echo the input.
+        for removed in ["awq", "AWQ", "gptq", "GPTQ"] {
             let json = format!(
                 r#"{{
-                  "recipe_id": "sample-{removed}-register",
+                  "recipe_id": "sample-register",
                   "type": "register",
+                  "description": "calibrated with the {removed} path",
                   "inputs": {{ "source_manifest": "manifest.json" }}
                 }}"#
             );
@@ -1171,7 +1165,11 @@ mod tests {
             let err = recipe
                 .validate()
                 .expect_err("removed quantization paths must be rejected");
-            assert!(err.contains(removed), "unexpected error: {err}");
+            assert!(
+                err.contains("recipe schema validation failed"),
+                "expected a schema rejection for '{removed}', got: {err}"
+            );
+            assert!(err.contains("/description"), "unexpected error: {err}");
         }
     }
 
@@ -1308,9 +1306,16 @@ mod tests {
             &sample_manifest_json("sample-v1", "sample_model", "gguf"),
         );
 
+        // Encoded twice on purpose: the schema is the source of truth and fires
+        // first, and the semantic layer must stand alone for callers that skip it.
         let err = recipe
             .validate()
             .expect_err("the packer cannot consume gguf, so a pack recipe must not declare it");
+        assert!(err.contains("/inputs/source_format"), "{err}");
+
+        let err = recipe
+            .validate_semantics()
+            .expect_err("the semantic layer must reject it too");
         assert!(err.contains("cannot pack source format 'gguf'"), "{err}");
     }
 
@@ -1393,6 +1398,11 @@ mod tests {
         let err = recipe
             .validate()
             .expect_err("outputs.register false must be rejected on a register recipe");
+        assert!(err.contains("/outputs/register"), "{err}");
+
+        let err = recipe
+            .validate_semantics()
+            .expect_err("the semantic layer must reject it too");
         assert!(err.contains("outputs.register must not be false"), "{err}");
     }
 
@@ -1515,7 +1525,7 @@ mod tests {
     }
 
     #[test]
-    fn test_registry_id_reference_skips_filesystem_lookup() {
+    fn test_registry_id_reference_is_rejected() {
         let recipe = Recipe::from_json(
             r#"{
               "recipe_id": "registry-id-ref",
@@ -1524,9 +1534,72 @@ mod tests {
             }"#,
         )
         .expect("parses");
-        assert!(recipe.validate().is_ok(), "{:?}", recipe.validate());
+
+        let err = recipe
+            .validate()
+            .expect_err("registry ids are not resolvable yet, so they must not validate");
+        assert!(err.contains("must name a manifest path"), "{err}");
 
         let err = recipe.apply(None).expect_err("apply needs a manifest path");
-        assert!(err.contains("registry id"), "unexpected error: {err}");
+        assert!(err.contains("must name a manifest path"), "{err}");
+    }
+
+    #[test]
+    fn test_misspelled_manifest_extension_is_rejected() {
+        // The whole point of rejecting non-path references: a typo used to validate
+        // clean because every cross-check was skipped.
+        for reference in ["manifest.jsonn", "manifest.JSON", "manifest.yaml"] {
+            let (_dir, recipe) = recipe_in_temp_dir(
+                &format!(
+                    r#"{{
+                      "recipe_id": "typo-ref",
+                      "type": "register",
+                      "inputs": {{ "source_manifest": "{reference}" }}
+                    }}"#
+                ),
+                &sample_manifest_json("sample-v1", "sample_model", "safetensors"),
+            );
+            let err = recipe
+                .validate()
+                .expect_err("a mistyped manifest reference must not validate");
+            assert!(err.contains("must name a manifest path"), "{err}");
+        }
+    }
+
+    #[test]
+    fn test_pack_rejects_unpackable_resolved_manifest_format() {
+        // No `inputs.source_format` declared: the resolved manifest is authoritative.
+        let (_dir, recipe) = recipe_in_temp_dir(
+            r#"{
+              "recipe_id": "pack-gguf-manifest",
+              "type": "goz1_pack",
+              "inputs": { "source_manifest": "manifest.json" },
+              "outputs": { "generated_format": "goz1" }
+            }"#,
+            &sample_manifest_json("sample-v1", "sample_model", "gguf"),
+        );
+
+        let err = recipe
+            .validate()
+            .expect_err("a pack recipe over a gguf manifest must not validate");
+        assert!(err.contains("cannot pack source format 'gguf'"), "{err}");
+    }
+
+    #[test]
+    fn test_saaq_requires_outputs_with_output_dir() {
+        let (_dir, recipe) = recipe_in_temp_dir(
+            r#"{
+              "recipe_id": "saaq-no-output-dir",
+              "type": "saaq",
+              "inputs": { "source_manifest": "manifest.json" },
+              "outputs": { "checksum_algorithm": "sha256" }
+            }"#,
+            &sample_manifest_json("sample-v1", "sample_model", "safetensors"),
+        );
+
+        let err = recipe
+            .validate()
+            .expect_err("a saaq recipe must declare where the run lands");
+        assert!(err.contains("output_dir"), "{err}");
     }
 }

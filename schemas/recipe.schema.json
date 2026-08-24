@@ -167,8 +167,10 @@
         },
         "goz1_version": {
           "type": "integer",
-          "minimum": 1,
-          "description": "GOZ1 pack format version to emit; must match the writer in magere-grok-process (currently 1)"
+          "description": "GOZ1 pack format version to emit; must match the writer in magere-grok-process (currently 1)",
+          "enum": [
+            1
+          ]
         },
         "checksum_algorithm": {
           "type": "string",
@@ -324,7 +326,15 @@
           "inputs": {
             "required": [
               "source_manifest"
-            ]
+            ],
+            "properties": {
+              "source_format": {
+                "enum": [
+                  "safetensors",
+                  "local_dir"
+                ]
+              }
+            }
           },
           "outputs": {
             "required": [
@@ -442,6 +452,13 @@
             "required": [
               "source_manifest"
             ]
+          },
+          "outputs": {
+            "properties": {
+              "register": {
+                "const": true
+              }
+            }
           }
         },
         "not": {
@@ -484,6 +501,36 @@
               "manifest_id",
               "artifact_path"
             ]
+          }
+        }
+      }
+    },
+    {
+      "$comment": "outputs.goz1_version is only meaningful for a GOZ1 output.",
+      "if": {
+        "properties": {
+          "outputs": {
+            "type": "object",
+            "required": [
+              "goz1_version"
+            ]
+          }
+        },
+        "required": [
+          "outputs"
+        ]
+      },
+      "then": {
+        "properties": {
+          "outputs": {
+            "required": [
+              "generated_format"
+            ],
+            "properties": {
+              "generated_format": {
+                "const": "goz1"
+              }
+            }
           }
         }
       }

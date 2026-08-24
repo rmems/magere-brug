@@ -251,17 +251,29 @@ Relative `inputs.*` references are resolved against the recipe file's directory 
 
 `magere recipe validate` runs the JSON Schema first, then the semantic checks the schema cannot express:
 
-- The referenced `source_manifest` / `goz1_ref` resolves on disk and parses **and validates** as a
-  manifest. This applies to `*.json` path references only: a reference that does not name a JSON
-  file is treated as a registry id and is *not* resolved or validated by `magere recipe validate`
-  (`magere recipe apply` rejects registry-id references outright)
+- Every `source_manifest` / `goz1_ref` reference names a `*.json` manifest path that resolves on
+  disk and parses **and validates** as a manifest. Registry-id references are rejected: nothing in
+  this workspace resolves ids yet, so a bare id is a typo rather than a feature (issues #19/#8)
 - `inputs.source_format` matches the manifest's `source_artifact.format`
 - For `register`: `outputs.manifest_id` matches the manifest's `metadata.manifest_id`, and `outputs.generated_format` matches the manifest's `generated_artifact.format`
+- For `register`: `outputs.register` is never `false` — the type exists to register its source manifest, so the combination is contradictory. Omitting the flag still registers
+- For `goz1_pack` / `ternary_pack`: the source being packed is `safetensors` or `local_dir`, checked
+  against both the declared `inputs.source_format` and the resolved manifest's
+  `source_artifact.format`. GGUF and `hf_repo` are registry/routing formats the packer cannot consume
+- For `goz1_pack` / `ternary_pack`: `outputs.lineage.parent_manifest_id` and `parent_path` match the
+  referenced manifest's `metadata.manifest_id` and `source_artifact.path`
 - `goz1_pack` emits `goz1`; `ternary_pack` emits `goz1` or `ternary`
+- For `saaq`: `outputs` is present and carries `output_dir`
 - `outputs.goz1_version` matches the writer in `magere-grok-process` (currently `1`) and is only allowed alongside `generated_format: "goz1"`
 - `outputs.lineage.recipe_id` matches the top-level `recipe_id`
 - `inputs.goz1_ref` points at a manifest whose `generated_artifact.format` is `goz1`
-- **AWQ and GPTQ are rejected anywhere in a recipe** — enum values, free-text fields, and object keys alike
+- **AWQ and GPTQ are rejected anywhere in a recipe.** This is enforced by the schema itself: every
+  string leaf is a `safe_string` (whose pattern bans them, case-insensitively, as a substring) or a
+  closed enum, and unknown keys are refused by `additionalProperties: false`
+
+Every rule above except `outputs.lineage.recipe_id` is now encoded in `schemas/recipe.schema.json`
+as well as in the Rust validator; JSON Schema draft-07 cannot compare two sibling fields, so that one
+stays a semantic-only check.
 
 ### Examples
 

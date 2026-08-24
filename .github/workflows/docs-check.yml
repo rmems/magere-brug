@@ -77,7 +77,7 @@ jobs:
           FOUND=0
           
           # Check manifests
-          for file in manifests/examples/*.json configs/models/*.json configs/models/cloud/*.json; do
+          for file in manifests/examples/*.json configs/models/*.json configs/models/cloud/*.json configs/recipes/*.json; do
             if [ -f "$file" ]; then
               # Check for /home/username/ patterns
               if grep -E "/home/[^/]+/" "$file" 2>/dev/null; then

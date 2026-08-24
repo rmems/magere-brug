@@ -40,7 +40,7 @@ const PACK_RECIPE_TYPES: &[&str] = &["goz1_pack", "ternary_pack"];
 ///
 /// See the module docs: the packer does not load real weights yet, so nothing downstream may
 /// treat these files as checkpoints.
-pub const SKELETON_NOTICE: &str = "SKELETON PACK — magere-grok-process::stream::run_quantize does not load real tensor weights yet: every tensor payload is a 4-byte placeholder with shape [1, 1]. The file is a structurally valid GOZ1 shell, not a usable checkpoint, which is why generated_artifact.status is 'planned' rather than 'success'.";
+pub const SKELETON_NOTICE: &str = "SKELETON PACK — magere-grok-process::stream::run_quantize does not load real tensor weights yet: every tensor payload is a 4-byte placeholder with shape [1, 1]. It also takes its QuantizeConfig as `_config` and discards it, so pack.input_dir, pack.input_format, pack.gif_threshold and pack.use_embedded_baseline are recorded but inert — only pack.dissect_manifest affects the emitted bytes. The file is a structurally valid GOZ1 shell, not a usable checkpoint, which is why generated_artifact.status is 'planned' rather than 'success'.";
 
 /// `generated_artifact.status` recorded for skeleton packs.
 ///
@@ -350,7 +350,22 @@ pub fn run_pack_recipe(
         }
         _ => false,
     };
-    registry.register(&emitted)?;
+    // The pack and its manifest are already on disk by this point, so a refusal here leaves
+    // real files behind. Say which ones, and which knob changes the identity that collided --
+    // a bare "slug already registered" would send the user hunting for artifacts they were
+    // never told about.
+    registry.register(&emitted).map_err(|e| {
+        format!(
+            "{}\n  note: the pack and manifest were already written before this collision was \
+             detected:\n    {}\n    {}\n  they are left in place; set a different \
+             `outputs.manifest_id` in the recipe (currently '{}') to register alongside the \
+             existing entry, or remove the conflicting registry entry first",
+            e,
+            pack_path.display(),
+            manifest_path.display(),
+            emitted.metadata.manifest_id
+        )
+    })?;
     let registry_json = registry
         .to_json_pretty()
         .map_err(|e| format!("Failed to serialize registry: {}", e))?;
@@ -828,6 +843,13 @@ mod tests {
 
         let err = run_pack_recipe(&variant_path, Some(&h.registry_path), None).unwrap_err();
         assert!(err.contains("already registered"), "{}", err);
+
+        // The pack and manifest were written before the collision was detected, so the error
+        // has to name them rather than leaving the user to discover orphans.
+        assert!(err.contains("test-pack-v2.goz1"), "{}", err);
+        assert!(err.contains("test-pack-v2.manifest.json"), "{}", err);
+        assert!(err.contains("outputs.manifest_id"), "{}", err);
+        assert!(h.output_dir.join("test-pack-v2.goz1").exists());
 
         // The pre-existing entry survives untouched.
         let registry =

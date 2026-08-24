@@ -215,6 +215,14 @@ fn inspect_command(path: &Path) -> Result<String, String> {
         }
     }
 
+    // Printed last and deliberately: `pack-goz1` records its skeleton caveat here, and
+    // without it the fields above ("goz1", a real path, "ternary", "2 bits") read as a
+    // finished 2-bit pack, with `planned` actively contradicted by a file existing at the
+    // printed path.
+    if let Some(description) = &manifest.metadata.description {
+        output.push_str(&format!("\nDescription:\n  {}\n", description));
+    }
+
     Ok(output)
 }
 
@@ -300,5 +308,26 @@ mod tests {
     fn test_cli_parser_pack_goz1_requires_recipe() {
         let cli = Cli::try_parse_from(vec!["magere", "pack-goz1"]);
         assert!(cli.is_err());
+    }
+
+    /// `pack-goz1` records its skeleton caveat in `metadata.description`; if `inspect` drops
+    /// it, the remaining fields read as a finished 2-bit ternary pack.
+    #[test]
+    fn inspect_surfaces_the_manifest_description() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let recipe_path = std::path::PathBuf::from("configs/recipes/ternary-pack-example.json");
+        if !recipe_path.exists() {
+            return; // not run from the repository root
+        }
+        let outcome = pack::run_pack_recipe(
+            &recipe_path,
+            Some(&dir.path().join("registry.json")),
+            Some(dir.path()),
+        )
+        .expect("pack run");
+
+        let rendered = inspect_command(&outcome.manifest_path).expect("inspect");
+        assert!(rendered.contains("Description:"), "{}", rendered);
+        assert!(rendered.contains("SKELETON PACK"), "{}", rendered);
     }
 }

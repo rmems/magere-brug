@@ -188,13 +188,15 @@ A recipe without a `pack` block is reference-only (example: `configs/recipes/goz
 
 `goz1_pack` / `ternary_pack` recipes become **executable** by adding a `pack` block, which maps onto `magere-grok-process`'s `QuantizeConfig`:
 
-| Field | Required | Default | Role |
-|-------|----------|---------|------|
-| `dissect_manifest` | yes | — | Path to the xai-dissect `DissectManifest` JSON (`schema_version` 1, `name_convention` `xai-dissect-v1`) listing the `preserve` / `fp16` / `ternary_candidates` tiers |
-| `input_dir` | no | source manifest's `source_artifact.path` | Directory holding the packable source weights |
-| `input_format` | no | mapped from `source_artifact.format` (`safetensors` → `safetensors`, `local_dir` → `npy_dir`) | `safetensors` or `npy_dir` |
-| `gif_threshold` | no | `0.05` | GIF saliency threshold ratio, in `[0.0, 1.0]` |
-| `use_embedded_baseline` | no | `false` | Use the packer's embedded baseline statistics |
+| Field | Required | Default | Live? | Role |
+|-------|----------|---------|-------|------|
+| `dissect_manifest` | yes | — | **live** | Path to the xai-dissect `DissectManifest` JSON (`schema_version` 1, `name_convention` `xai-dissect-v1`) listing the `preserve` / `fp16` / `ternary_candidates` tiers. The names and tiers here become the pack's tensor table |
+| `input_dir` | no | source manifest's `source_artifact.path` | **inert** | Directory holding the packable source weights. Existence is reported as a note, not required — the skeleton packer never reads it |
+| `input_format` | no | mapped from `source_artifact.format` (`safetensors` → `safetensors`, `local_dir` → `npy_dir`) | **inert** | `safetensors` or `npy_dir` |
+| `gif_threshold` | no | `0.05` | **inert** | GIF saliency threshold ratio, in `[0.0, 1.0]` |
+| `use_embedded_baseline` | no | `false` | **inert** | Use the packer's embedded baseline statistics |
+
+> **Only `dissect_manifest` affects the emitted bytes.** `magere pack-goz1` builds a full `QuantizeConfig` from this block and hands it to `magere_grok_process::stream::run_quantize`, whose signature is `run_quantize(_config: &QuantizeConfig, manifest: &DissectManifest)` — the config is bound to `_config` and discarded. The inert fields are still parsed, range-checked and recorded in the emitted manifest, so they document intent and will start working unchanged when real tensor loading lands; today they change nothing about the output. This is the less obvious half of the skeleton caveat: the payloads are placeholders **and** your pack configuration is ignored.
 
 The schema keeps `pack` optional (reference-only stubs stay valid) but rejects a `pack` block on a non-packing recipe type, and rejects `outputs.generated_format` other than `goz1` alongside one. `magere pack-goz1` additionally requires the block at run time. Paths inside a recipe are resolved against the **current working directory**, so repo-relative recipes such as `configs/recipes/ternary-pack-example.json` are meant to be run from the repository root.
 
@@ -413,12 +415,18 @@ cargo run --bin magere -- verify /models/olmoe/OLMoE-1B-7B-0125-Instruct-F16.ggu
 ### Pack a GOZ1 Artifact from a Recipe
 
 ```bash
+cargo run --bin magere -- pack-goz1 configs/recipes/ternary-pack-example.json
+```
+
+That runs as-is from the repository root: the recipe's `outputs.output_dir` is the repo-relative `artifacts/packs/` (gitignored), and `--registry` defaults to `registry.json` in the working directory. Override either explicitly:
+
+```bash
 cargo run --bin magere -- pack-goz1 configs/recipes/ternary-pack-example.json \
-  --output-dir /packs/redpajama \
+  --output-dir artifacts/packs \
   --registry configs/models/registry.json
 ```
 
-`--output-dir` overrides the recipe's `outputs.output_dir`; `--registry` defaults to `registry.json` in the working directory. Run the command from the repository root so the recipe's relative paths resolve.
+Paths inside a recipe resolve against the **current working directory**, so run this from the repository root.
 
 The runner:
 

@@ -1,14 +1,14 @@
 {
   "recipe_id": "redpajama-ternary-pack-example",
   "type": "ternary_pack",
-  "description": "Runnable example for `magere pack-goz1`: packs the mini dissect-manifest fixture into a GOZ1 shell. Run from the repository root with --output-dir pointing at a writable directory.",
+  "description": "Runnable example for `magere pack-goz1`: packs the mini dissect-manifest fixture into a GOZ1 shell. Run from the repository root; writes to the repo-relative artifacts/packs/ (gitignored), so it works as-is without root or a writable /packs.",
   "inputs": {
     "source_manifest": "manifests/examples/redpajama-incite-7b-chat.json"
   },
   "outputs": {
     "generated_format": "goz1",
     "manifest_id": "redpajama-incite-7b-chat-goz1-v1",
-    "output_dir": "/packs/redpajama"
+    "output_dir": "artifacts/packs"
   },
   "pack": {
     "dissect_manifest": "configs/recipes/fixtures/grok-mini-dissect.json",

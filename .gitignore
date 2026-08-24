@@ -6,3 +6,7 @@ __pycache__/
 .venv/
 venv/
 *.egg-info/
+
+# Generated GOZ1 packs from `magere pack-goz1` (see configs/recipes/ternary-pack-example.json)
+artifacts/packs/*
+!artifacts/packs/.gitkeep

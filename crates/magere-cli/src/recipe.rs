@@ -36,6 +36,11 @@ const DEFAULT_REGISTRY_PATH: &str = "registry.json";
 
 const VALID_GENERATED_FORMATS: &[&str] = &["goz1", "gguf", "ternary", "binary"];
 const VALID_SOURCE_FORMATS: &[&str] = &["gguf", "safetensors", "hf_repo", "local_dir"];
+/// Source formats `magere-grok-process` can actually pack. NPY directories are
+/// recorded as `local_dir` and mapped to `InputFormat::NpyDir`; GGUF stays a
+/// registry/routing source format and is not a packer input. See
+/// `docs/ARCHITECTURE.md` ("Primary path").
+const PACKABLE_SOURCE_FORMATS: &[&str] = &["safetensors", "local_dir"];
 
 /// `magere recipe <...>` subcommands.
 ///
@@ -446,16 +451,67 @@ impl Recipe {
             .inputs
             .as_ref()
             .and_then(|inputs| inputs.source_format.as_deref())
-            && !VALID_SOURCE_FORMATS.contains(&source_format)
         {
-            return Err(format!(
-                "inputs.source_format '{source_format}' must be one of: {}",
-                VALID_SOURCE_FORMATS.join(", ")
-            ));
+            if !VALID_SOURCE_FORMATS.contains(&source_format) {
+                return Err(format!(
+                    "inputs.source_format '{source_format}' must be one of: {}",
+                    VALID_SOURCE_FORMATS.join(", ")
+                ));
+            }
+            self.reject_unpackable_source_format(source_format)?;
         }
 
         self.validate_outputs()?;
         self.validate_references()
+    }
+
+    /// A pack recipe naming a source the packer cannot consume passes schema
+    /// validation but could never be executed by the issue #19 runner, so reject
+    /// it up front rather than at pack time.
+    fn reject_unpackable_source_format(&self, source_format: &str) -> Result<(), String> {
+        if self.recipe_type.is_pack() && !PACKABLE_SOURCE_FORMATS.contains(&source_format) {
+            return Err(format!(
+                "recipe type '{}' cannot pack source format '{source_format}'; \
+                 the packer accepts: {}",
+                self.recipe_type,
+                PACKABLE_SOURCE_FORMATS.join(", ")
+            ));
+        }
+        Ok(())
+    }
+
+    /// Cross-check declared pack provenance against the manifest being packed so
+    /// a typo cannot be persisted as false artifact lineage.
+    fn validate_pack_lineage(&self, manifest: &Manifest) -> Result<(), String> {
+        let Some(lineage) = self
+            .outputs
+            .as_ref()
+            .and_then(|outputs| outputs.lineage.as_ref())
+        else {
+            return Ok(());
+        };
+
+        if let Some(parent_manifest_id) = lineage.parent_manifest_id.as_deref()
+            && parent_manifest_id != manifest.metadata.manifest_id
+        {
+            return Err(format!(
+                "outputs.lineage.parent_manifest_id '{parent_manifest_id}' does not match the \
+                 referenced manifest's metadata.manifest_id '{}'",
+                manifest.metadata.manifest_id
+            ));
+        }
+
+        if let Some(parent_path) = lineage.parent_path.as_deref()
+            && parent_path != manifest.source_artifact.path
+        {
+            return Err(format!(
+                "outputs.lineage.parent_path '{parent_path}' does not match the referenced \
+                 manifest's source_artifact.path '{}'",
+                manifest.source_artifact.path
+            ));
+        }
+
+        Ok(())
     }
 
     fn validate_outputs(&self) -> Result<(), String> {
@@ -566,6 +622,10 @@ impl Recipe {
                      source_artifact.format '{}'",
                     manifest.source_artifact.format
                 ));
+            }
+
+            if self.recipe_type.is_pack() {
+                self.validate_pack_lineage(&manifest)?;
             }
 
             if self.recipe_type == RecipeType::Register {
@@ -1234,6 +1294,88 @@ mod tests {
         );
         let err = recipe.validate().expect_err("must be rejected");
         assert!(err.contains("lineage"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn test_pack_recipe_rejects_unpackable_source_format() {
+        let (_dir, recipe) = recipe_in_temp_dir(
+            r#"{
+              "recipe_id": "pack-gguf-source",
+              "type": "ternary_pack",
+              "inputs": { "source_manifest": "manifest.json", "source_format": "gguf" },
+              "outputs": { "generated_format": "goz1" }
+            }"#,
+            &sample_manifest_json("sample-v1", "sample_model", "gguf"),
+        );
+
+        let err = recipe
+            .validate()
+            .expect_err("the packer cannot consume gguf, so a pack recipe must not declare it");
+        assert!(err.contains("cannot pack source format 'gguf'"), "{err}");
+    }
+
+    #[test]
+    fn test_register_recipe_accepts_gguf_source_format() {
+        let (_dir, recipe) = recipe_in_temp_dir(
+            r#"{
+              "recipe_id": "register-gguf-source",
+              "type": "register",
+              "inputs": { "source_manifest": "manifest.json", "source_format": "gguf" }
+            }"#,
+            &sample_manifest_json("sample-v1", "sample_model", "gguf"),
+        );
+
+        recipe
+            .validate()
+            .expect("gguf stays a valid registry source format for register recipes");
+    }
+
+    #[test]
+    fn test_pack_lineage_parent_manifest_id_must_match_source() {
+        let (_dir, recipe) = recipe_in_temp_dir(
+            r#"{
+              "recipe_id": "pack-bad-lineage-id",
+              "type": "ternary_pack",
+              "inputs": { "source_manifest": "manifest.json" },
+              "outputs": {
+                "generated_format": "goz1",
+                "lineage": { "parent_manifest_id": "typo-v9" }
+              }
+            }"#,
+            &sample_manifest_json("sample-v1", "sample_model", "safetensors"),
+        );
+
+        let err = recipe
+            .validate()
+            .expect_err("mismatched pack lineage must not validate");
+        assert!(
+            err.contains("outputs.lineage.parent_manifest_id 'typo-v9'"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn test_pack_lineage_parent_path_must_match_source() {
+        let (_dir, recipe) = recipe_in_temp_dir(
+            r#"{
+              "recipe_id": "pack-bad-lineage-path",
+              "type": "ternary_pack",
+              "inputs": { "source_manifest": "manifest.json" },
+              "outputs": {
+                "generated_format": "goz1",
+                "lineage": { "parent_path": "/models/wrong/path" }
+              }
+            }"#,
+            &sample_manifest_json("sample-v1", "sample_model", "safetensors"),
+        );
+
+        let err = recipe
+            .validate()
+            .expect_err("mismatched pack lineage path must not validate");
+        assert!(
+            err.contains("outputs.lineage.parent_path '/models/wrong/path'"),
+            "{err}"
+        );
     }
 
     #[test]

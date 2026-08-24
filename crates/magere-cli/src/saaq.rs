@@ -488,6 +488,23 @@ fn parse_telemetry(raw: RawTelemetry, recipe_path: &Path) -> Result<TelemetrySou
                 }
                 None => 0,
             };
+            // Each field is individually valid, but the tick-0..tick-(n-1)
+            // timestamp ramp they describe need not fit in a u64: a debug build
+            // would panic on the overflow and a release build would wrap into
+            // non-monotonic timestamps, collapsing the calibrator's time window
+            // to its 1 ms fallback. Reject the recipe instead.
+            let last_tick = (ticks - 1) as u64;
+            if tick_interval_ms
+                .checked_mul(last_tick)
+                .and_then(|span| start_timestamp_ms.checked_add(span))
+                .is_none()
+            {
+                return Err(format!(
+                    "saaq.telemetry timestamps overflow u64: start_timestamp_ms \
+                     ({start_timestamp_ms}) + tick_interval_ms ({tick_interval_ms}) * \
+                     {last_tick} exceeds u64::MAX"
+                ));
+            }
             if raw.path.is_some() {
                 return Err(
                     "saaq.telemetry.path is only valid for source 'csv', not 'synthetic'"
@@ -674,7 +691,8 @@ fn read_telemetry_csv(path: &Path) -> Result<Vec<TelemetrySnapshot>, String> {
             })
         };
         let number = |index: usize, name: &str| -> Result<f32, String> {
-            field(index, name)?.parse::<f32>().map_err(|e| {
+            let raw = field(index, name)?;
+            let value = raw.parse::<f32>().map_err(|e| {
                 format!(
                     "Telemetry CSV '{}' row {} column '{}': {}",
                     path.display(),
@@ -682,7 +700,21 @@ fn read_telemetry_csv(path: &Path) -> Result<Vec<TelemetrySnapshot>, String> {
                     name,
                     e
                 )
-            })
+            })?;
+            // `"NaN"` and `"inf"` parse cleanly as f32. Reject them here so CSV
+            // replay holds the same finiteness guarantee the synthetic source
+            // and `saaq.thresholds` already enforce, instead of letting
+            // non-finite values reach the encoder and the emitted latent CSV.
+            if !value.is_finite() {
+                return Err(format!(
+                    "Telemetry CSV '{}' row {} column '{}': value must be finite (got '{}')",
+                    path.display(),
+                    row + 1,
+                    name,
+                    raw
+                ));
+            }
+            Ok(value)
         };
 
         let timestamp_ms = field(indices[0], TELEMETRY_CSV_COLUMNS[0])?
@@ -1332,6 +1364,41 @@ mod tests {
     }
 
     #[test]
+    fn rejects_synthetic_timestamps_that_overflow_u64() {
+        let out = TempDir::new().unwrap();
+        // Every field is individually valid (ticks >= 1, interval >= 1,
+        // start >= 0), but the ramp they describe runs past u64::MAX.
+        let json = recipe_json(4, "").replace(
+            "\"start_timestamp_ms\": 0",
+            "\"start_timestamp_ms\": 9223372036854775807",
+        );
+        let json = json.replace(
+            "\"tick_interval_ms\": 250",
+            "\"tick_interval_ms\": 9223372036854775807",
+        );
+        let error = config_from(&json, out.path()).unwrap_err();
+        assert!(error.contains("overflow"), "unexpected error: {error}");
+    }
+
+    #[test]
+    fn accepts_synthetic_timestamps_at_the_edge_of_u64() {
+        let out = TempDir::new().unwrap();
+        // The raw fields are i64, so the largest ramp expressible is
+        // i64::MAX + i64::MAX * 1 == u64::MAX - 1 at ticks = 2: the last value
+        // that must still be accepted.
+        let json = recipe_json(2, "")
+            .replace(
+                "\"start_timestamp_ms\": 0",
+                "\"start_timestamp_ms\": 9223372036854775807",
+            )
+            .replace(
+                "\"tick_interval_ms\": 250",
+                "\"tick_interval_ms\": 9223372036854775807",
+            );
+        assert!(config_from(&json, out.path()).is_ok());
+    }
+
+    #[test]
     fn rejects_missing_output_dir() {
         let json = recipe_json(2, "");
         let error = SaaqRunConfig::from_json(
@@ -1416,6 +1483,33 @@ mod tests {
             error.contains("cpu_package_power_w"),
             "unexpected error: {error}"
         );
+    }
+
+    #[test]
+    fn rejects_non_finite_csv_telemetry_values() {
+        for bad in ["NaN", "inf", "-inf"] {
+            let out = TempDir::new().unwrap();
+            let telemetry_path = out.path().join("telemetry.csv");
+            std::fs::write(
+                &telemetry_path,
+                format!(
+                    "timestamp_ms,gpu_temp_c,gpu_power_w,cpu_tctl_c,cpu_package_power_w\n\
+                     0,58.0,240.0,62.0,95.0\n\
+                     250,{bad},246.0,62.9,100.0\n"
+                ),
+            )
+            .unwrap();
+
+            let error = config_from(&csv_recipe_json(&telemetry_path), out.path()).unwrap_err();
+            assert!(
+                error.contains("must be finite"),
+                "unexpected error for '{bad}': {error}"
+            );
+            assert!(
+                error.contains("gpu_temp_c"),
+                "unexpected error for '{bad}': {error}"
+            );
+        }
     }
 
     #[test]

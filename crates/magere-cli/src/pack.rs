@@ -340,8 +340,17 @@ pub fn run_pack_recipe(
         ArtifactRegistry::new()
     };
     // Re-running the same recipe replaces its own entry rather than tripping the registry's
-    // unique-slug rule.
-    let registry_replaced = registry.models.remove(&emitted.model.slug).is_some();
+    // unique-slug rule. An entry written by a *different* manifest is left alone so that
+    // `register` still raises its collision error: the generated slug derives only from the
+    // source model, so an unrelated pack of the same model (possibly a real, successful one)
+    // must not be silently displaced by a fresh skeleton entry.
+    let registry_replaced = match registry.models.get(&emitted.model.slug) {
+        Some(existing) if existing.manifest_id == emitted.metadata.manifest_id => {
+            registry.models.remove(&emitted.model.slug);
+            true
+        }
+        _ => false,
+    };
     registry.register(&emitted)?;
     let registry_json = registry
         .to_json_pretty()
@@ -766,6 +775,34 @@ mod tests {
         let registry =
             ArtifactRegistry::from_json(&fs::read_to_string(&h.registry_path).unwrap()).unwrap();
         assert_eq!(registry.count(), 1);
+    }
+
+    #[test]
+    fn a_foreign_registry_entry_is_not_displaced_by_a_new_pack() {
+        let h = default_harness();
+        let first = run_pack_recipe(&h.recipe_path, Some(&h.registry_path), None).unwrap();
+        assert!(!first.registry_replaced);
+        let slug = first.manifest.model.slug.clone();
+
+        // Same source model -- so the same generated slug -- but a different manifest
+        // identity. This must surface the registry's collision error rather than silently
+        // overwriting an entry this recipe did not write.
+        let mut variant = base_recipe(&h.output_dir);
+        variant["recipe_id"] = json!("test-ternary-pack-variant");
+        variant["outputs"]["manifest_id"] = json!("test-pack-v2");
+        let variant_path = write_recipe(h.dir.path(), "recipe-variant.json", &variant);
+
+        let err = run_pack_recipe(&variant_path, Some(&h.registry_path), None).unwrap_err();
+        assert!(err.contains("already registered"), "{}", err);
+
+        // The pre-existing entry survives untouched.
+        let registry =
+            ArtifactRegistry::from_json(&fs::read_to_string(&h.registry_path).unwrap()).unwrap();
+        assert_eq!(registry.count(), 1);
+        assert_eq!(
+            registry.models.get(&slug).unwrap().manifest_id,
+            "test-pack-v1"
+        );
     }
 
     #[test]

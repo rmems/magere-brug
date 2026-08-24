@@ -333,7 +333,7 @@ impl Recipe {
             }
             out.push_str(&format!(
                 "Register Output: {}\n",
-                outputs.register.unwrap_or(false)
+                self.registers_output(outputs)
             ));
             if let Some(registry_path) = &outputs.registry_path {
                 out.push_str(&format!("Registry Path: {registry_path}\n"));
@@ -393,6 +393,16 @@ impl Recipe {
     }
 
     /// Which command/issue owns execution of this recipe type.
+    /// Effective value of `outputs.register`. A register recipe defaults to `true`
+    /// because registering its source manifest is the whole point of the type, which
+    /// is exactly what `apply_register` does; every other type defaults to `false`.
+    /// `inspect` and `apply` must not disagree here.
+    fn registers_output(&self, outputs: &RecipeOutputs) -> bool {
+        outputs
+            .register
+            .unwrap_or(self.recipe_type == RecipeType::Register)
+    }
+
     fn runner_owner(&self) -> &'static str {
         match self.recipe_type {
             RecipeType::Register => "magere recipe apply (implemented here)",
@@ -788,8 +798,7 @@ impl Recipe {
         let should_register = self
             .outputs
             .as_ref()
-            .and_then(|outputs| outputs.register)
-            .unwrap_or(true);
+            .is_none_or(|outputs| self.registers_output(outputs));
         if !should_register {
             return Err(format!(
                 "recipe '{}': outputs.register is false, so there is nothing to apply",
@@ -1381,6 +1390,32 @@ mod tests {
             err.contains("outputs.lineage.parent_path '/models/wrong/path'"),
             "{err}"
         );
+    }
+
+    #[test]
+    fn test_summary_register_default_matches_apply() {
+        let (dir, recipe) = recipe_in_temp_dir(
+            r#"{
+              "recipe_id": "register-implicit",
+              "type": "register",
+              "inputs": { "source_manifest": "manifest.json" },
+              "outputs": { "checksum_algorithm": "sha256" }
+            }"#,
+            &sample_manifest_json("sample-v1", "sample_model", "safetensors"),
+        );
+
+        // inspect must not claim the registry is left alone when apply will write it.
+        assert!(
+            recipe.summary().contains("Register Output: true"),
+            "{}",
+            recipe.summary()
+        );
+
+        let registry_path = dir.path().join("registry.json");
+        recipe
+            .apply(Some(&registry_path))
+            .expect("register applies");
+        assert!(registry_path.is_file(), "apply disagreed with inspect");
     }
 
     #[test]

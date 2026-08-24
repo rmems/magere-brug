@@ -1,0 +1,30 @@
+{
+  "recipe_id": "redpajama-register-safetensors",
+  "type": "register",
+  "description": "Register the RedPajama-INCITE-7B-Chat safetensors baseline ahead of a ternary pack. The pack itself is a separate recipe and a separate runner (issue #19).",
+  "inputs": {
+    "source_manifest": "manifests/examples/redpajama-incite-7b-chat.json",
+    "source_format": "safetensors"
+  },
+  "outputs": {
+    "manifest_id": "redpajama-incite-7b-chat-v1",
+    "generated_format": "goz1",
+    "goz1_version": 1,
+    "checksum_algorithm": "sha256",
+    "register": true,
+    "registry_path": "artifacts/registry.json"
+  },
+  "handoff": {
+    "myelin_accelerator": {
+      "enabled": false,
+      "status": "placeholder",
+      "kernel_types": ["ternary", "binary", "saaq"],
+      "notes": "Forward-declared only. Kernel execution lives in myelin-accelerator; magere-brug records lineage, not kernels."
+    },
+    "combine_for_ai": {
+      "enabled": false,
+      "status": "placeholder",
+      "notes": "Forward-declared only. Benchmark scoring is owned by combine-for-AI."
+    }
+  }
+}

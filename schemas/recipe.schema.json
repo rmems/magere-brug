@@ -1,16 +1,80 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "magere-brug Recipe",
-  "description": "Thin recipe registration schema for referencing source manifests and GOZ1 packs. Full runners live in later issues (pack #19, SAAQ #8).",
+  "description": "Recipe pipeline schema for hybrid/ternary GOZ1 experiments. A recipe declares what to register, pack, or calibrate; it never contains model weights. Only the `register` runner is implemented in `magere recipe apply` — pack runners are tracked by issue #19 and the SAAQ runner by issue #8. AWQ and GPTQ are removed paths and are rejected everywhere in this schema.",
   "type": "object",
   "required": [
     "recipe_id",
     "type"
   ],
+  "definitions": {
+    "safe_string": {
+      "type": "string",
+      "minLength": 1,
+      "not": {
+        "pattern": "[Aa][Ww][Qq]|[Gg][Pp][Tt][Qq]"
+      },
+      "description": "Non-empty string that must not name a removed quantization path (AWQ/GPTQ). The primary path is packable source -> ternary pack -> GOZ1 -> SAAQ."
+    },
+    "handoff_target": {
+      "type": "object",
+      "description": "Forward-declared handoff placeholder. magere-brug only records the intent and the artifact lineage; the named repository owns execution. Nothing here is executed by this repo.",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Whether the downstream handoff is intended for this recipe"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "placeholder",
+            "planned",
+            "ready"
+          ],
+          "description": "Handoff readiness. `placeholder` means the target is forward-declared only."
+        },
+        "kernel_types": {
+          "type": "array",
+          "description": "Kernel families the downstream repo is expected to exercise",
+          "items": {
+            "type": "string",
+            "enum": [
+              "ternary",
+              "binary",
+              "saaq"
+            ]
+          },
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "pipeline_id": {
+          "description": "Downstream pipeline identifier (e.g. a combine-for-AI benchmark pipeline)",
+          "allOf": [
+            {
+              "$ref": "#/definitions/safe_string"
+            }
+          ]
+        },
+        "notes": {
+          "description": "Free-form note about the forward-declared handoff",
+          "allOf": [
+            {
+              "$ref": "#/definitions/safe_string"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false
+    }
+  },
   "properties": {
     "recipe_id": {
-      "type": "string",
-      "description": "Stable recipe identifier"
+      "description": "Stable recipe identifier",
+      "allOf": [
+        {
+          "$ref": "#/definitions/safe_string"
+        }
+      ]
     },
     "type": {
       "type": "string",
@@ -20,31 +84,52 @@
         "ternary_pack",
         "saaq"
       ],
-      "description": "Recipe kind. goz1_pack/ternary_pack drive packing; saaq runs SAAQ validation."
+      "description": "Recipe kind. `register` records an existing source artifact (GGUF, safetensors, HF repo, local dir). `goz1_pack`/`ternary_pack` describe packing runs (runner: issue #19). `saaq` describes an SAAQ validation run (runner: issue #8)."
     },
     "description": {
-      "type": "string"
+      "description": "Human-readable summary of the recipe",
+      "allOf": [
+        {
+          "$ref": "#/definitions/safe_string"
+        }
+      ]
     },
     "inputs": {
       "type": "object",
       "description": "Input references for the recipe",
       "properties": {
         "source_manifest": {
+          "description": "Path to the source model manifest (a `*.json` path is resolved and parsed) or a registry id",
+          "allOf": [
+            {
+              "$ref": "#/definitions/safe_string"
+            }
+          ]
+        },
+        "source_format": {
           "type": "string",
-          "minLength": 1,
-          "description": "Path or registry id of the source model manifest"
+          "enum": [
+            "gguf",
+            "safetensors",
+            "hf_repo",
+            "local_dir"
+          ],
+          "description": "Expected `source_artifact.format` of the referenced manifest. Declaring it turns the recipe into an assertion: validation fails when the manifest disagrees."
         },
         "goz1_ref": {
-          "type": "string",
-          "minLength": 1,
-          "description": "Path or registry id of a registered GOZ1 pack (for post-pack steps such as SAAQ)"
+          "description": "Path to a manifest carrying a registered GOZ1 pack, or a registry id (for post-pack steps such as SAAQ)",
+          "allOf": [
+            {
+              "$ref": "#/definitions/safe_string"
+            }
+          ]
         }
       },
       "additionalProperties": false
     },
     "outputs": {
       "type": "object",
-      "description": "Expected outputs",
+      "description": "Expected outputs and registration behaviour",
       "properties": {
         "generated_format": {
           "type": "string",
@@ -57,12 +142,160 @@
           "description": "Format of the primary generated artifact; prefer goz1"
         },
         "manifest_id": {
-          "type": "string",
-          "description": "Manifest id to write or update after the recipe"
+          "description": "Manifest id to write or update after the recipe runs",
+          "allOf": [
+            {
+              "$ref": "#/definitions/safe_string"
+            }
+          ]
         },
         "output_dir": {
+          "description": "Directory for pack or SAAQ run outputs",
+          "allOf": [
+            {
+              "$ref": "#/definitions/safe_string"
+            }
+          ]
+        },
+        "artifact_path": {
+          "description": "Expected on-disk path of the emitted artifact (e.g. the `.goz1` file)",
+          "allOf": [
+            {
+              "$ref": "#/definitions/safe_string"
+            }
+          ]
+        },
+        "goz1_version": {
+          "type": "integer",
+          "description": "GOZ1 pack format version to emit; must match the writer in magere-grok-process (currently 1)",
+          "enum": [
+            1
+          ]
+        },
+        "checksum_algorithm": {
           "type": "string",
-          "description": "Directory for pack or SAAQ run outputs"
+          "enum": [
+            "sha256"
+          ],
+          "description": "Checksum recorded for the emitted artifact"
+        },
+        "register": {
+          "type": "boolean",
+          "description": "When true, the runner writes/updates the artifact manifest and adds it to the artifact registry"
+        },
+        "registry_path": {
+          "description": "Registry file to write when `register` is true; the CLI `--registry` flag overrides it",
+          "allOf": [
+            {
+              "$ref": "#/definitions/safe_string"
+            }
+          ]
+        },
+        "lineage": {
+          "type": "object",
+          "description": "Provenance recorded on the emitted artifact so a pack can be traced back to its source",
+          "properties": {
+            "parent_manifest_id": {
+              "description": "Manifest id of the artifact this output was derived from",
+              "allOf": [
+                {
+                  "$ref": "#/definitions/safe_string"
+                }
+              ]
+            },
+            "parent_path": {
+              "description": "On-disk path of the artifact this output was derived from",
+              "allOf": [
+                {
+                  "$ref": "#/definitions/safe_string"
+                }
+              ]
+            },
+            "recipe_id": {
+              "description": "Recipe that produced the output; normally equal to the top-level `recipe_id`",
+              "allOf": [
+                {
+                  "$ref": "#/definitions/safe_string"
+                }
+              ]
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "calibration": {
+      "type": "object",
+      "description": "Calibration dataset configuration. Only meaningful for the ternary/GOZ1 pack and SAAQ paths; `register` recipes must not carry it.",
+      "required": [
+        "dataset"
+      ],
+      "properties": {
+        "dataset": {
+          "description": "Calibration dataset name (e.g. wikitext-2, math_logic)",
+          "allOf": [
+            {
+              "$ref": "#/definitions/safe_string"
+            }
+          ]
+        },
+        "dataset_path": {
+          "description": "Path to the calibration corpus",
+          "allOf": [
+            {
+              "$ref": "#/definitions/safe_string"
+            }
+          ]
+        },
+        "config_path": {
+          "description": "Path to a calibration config file (mirrors `quantization.calibration_config_path` in a manifest)",
+          "allOf": [
+            {
+              "$ref": "#/definitions/safe_string"
+            }
+          ]
+        },
+        "sample_count": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Number of calibration samples to draw"
+        },
+        "seed": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Deterministic seed for calibration sampling"
+        }
+      },
+      "additionalProperties": false
+    },
+    "handoff": {
+      "type": "object",
+      "description": "Forward-declared handoff placeholders for downstream repositories. magere-brug does not execute any of these; they exist so a recipe can carry the intent and lineage across repo boundaries.",
+      "properties": {
+        "myelin_accelerator": {
+          "description": "CUDA kernel execution target (repo: myelin-accelerator)",
+          "allOf": [
+            {
+              "$ref": "#/definitions/handoff_target"
+            }
+          ]
+        },
+        "corinth_canal": {
+          "description": "Reference SAAQ implementation target (repo: corinth-canal)",
+          "allOf": [
+            {
+              "$ref": "#/definitions/handoff_target"
+            }
+          ]
+        },
+        "combine_for_ai": {
+          "description": "Benchmark scoring target (repo: combine-for-AI)",
+          "allOf": [
+            {
+              "$ref": "#/definitions/handoff_target"
+            }
+          ]
         }
       },
       "additionalProperties": false
@@ -86,13 +319,76 @@
       },
       "then": {
         "required": [
-          "inputs"
+          "inputs",
+          "outputs"
         ],
         "properties": {
           "inputs": {
             "required": [
               "source_manifest"
+            ],
+            "properties": {
+              "source_format": {
+                "enum": [
+                  "safetensors",
+                  "local_dir"
+                ]
+              }
+            }
+          },
+          "outputs": {
+            "required": [
+              "generated_format"
             ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "goz1_pack"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "outputs": {
+            "properties": {
+              "generated_format": {
+                "const": "goz1"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "ternary_pack"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "outputs": {
+            "properties": {
+              "generated_format": {
+                "enum": [
+                  "goz1",
+                  "ternary"
+                ]
+              }
+            }
           }
         }
       }
@@ -110,7 +406,8 @@
       },
       "then": {
         "required": [
-          "inputs"
+          "inputs",
+          "outputs"
         ],
         "properties": {
           "inputs": {
@@ -125,6 +422,11 @@
                   "goz1_ref"
                 ]
               }
+            ]
+          },
+          "outputs": {
+            "required": [
+              "output_dir"
             ]
           }
         }
@@ -150,6 +452,85 @@
             "required": [
               "source_manifest"
             ]
+          },
+          "outputs": {
+            "properties": {
+              "register": {
+                "const": true
+              }
+            }
+          }
+        },
+        "not": {
+          "required": [
+            "calibration"
+          ]
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "enum": [
+              "goz1_pack",
+              "ternary_pack"
+            ]
+          },
+          "outputs": {
+            "type": "object",
+            "required": [
+              "register"
+            ],
+            "properties": {
+              "register": {
+                "const": true
+              }
+            }
+          }
+        },
+        "required": [
+          "type",
+          "outputs"
+        ]
+      },
+      "then": {
+        "properties": {
+          "outputs": {
+            "required": [
+              "manifest_id",
+              "artifact_path"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "$comment": "outputs.goz1_version is only meaningful for a GOZ1 output.",
+      "if": {
+        "properties": {
+          "outputs": {
+            "type": "object",
+            "required": [
+              "goz1_version"
+            ]
+          }
+        },
+        "required": [
+          "outputs"
+        ]
+      },
+      "then": {
+        "properties": {
+          "outputs": {
+            "required": [
+              "generated_format"
+            ],
+            "properties": {
+              "generated_format": {
+                "const": "goz1"
+              }
+            }
           }
         }
       }

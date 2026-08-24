@@ -765,8 +765,8 @@ impl Recipe {
         let resolved = self.resolve_reference(reference).ok_or_else(|| {
             format!(
                 "{label} '{reference}' could not be resolved to a file on disk \
-                 (searched the recipe's directory up to the repository root, then the \
-                 working directory)"
+                 (searched the recipe's directory up to the repository root that \
+                 contains it, and no further)"
             )
         })?;
 
@@ -789,16 +789,23 @@ impl Recipe {
 
     /// Resolve an input reference that must already exist on disk.
     ///
-    /// Relative references are tried against the recipe file's directory and each
-    /// of its ancestors (so `configs/recipes/x.json` can name a repo-root-relative
-    /// `manifests/examples/y.json`), then against the working directory.
+    /// The search is **bounded before it begins**, so it can never reach outside the
+    /// tree the recipe lives in:
     ///
-    /// The ancestor walk **stops at the repository root** that contains the recipe.
-    /// Without that bound the walk runs all the way to `/`, which made resolution
-    /// depend on how the recipe was addressed: an absolute recipe path could satisfy
-    /// a reference from a sibling checkout or a parent directory outside the repo,
-    /// so the same file validated locally and failed in CI (where paths are relative
-    /// and the walk happens to stop at the repo root anyway).
+    /// - Recipe loaded from a file, inside a repository: the recipe's directory and
+    ///   each ancestor up to and including the repository root (so
+    ///   `configs/recipes/x.json` can name a repo-root-relative
+    ///   `manifests/examples/y.json`), and no further.
+    /// - Recipe loaded from a file with no repository marker in any ancestor: the
+    ///   recipe's own directory only. Walking to `/` in this case would reintroduce
+    ///   the escape the bound exists to prevent.
+    /// - Recipe built in memory (no source path): the working directory.
+    ///
+    /// Computing the boundary up front matters. An unbounded walk made resolution
+    /// depend on how the recipe was *addressed* rather than where it lives: an
+    /// absolute recipe path could satisfy a reference from a sibling checkout or a
+    /// parent directory, so the same file validated locally and failed in CI, and a
+    /// nearer file could silently shadow the intended one.
     fn resolve_reference(&self, reference: &str) -> Option<PathBuf> {
         let candidate = Path::new(reference);
 
@@ -806,20 +813,31 @@ impl Recipe {
             return candidate.is_file().then(|| candidate.to_path_buf());
         }
 
-        if let Some(dir) = self.source_path.as_deref().and_then(Path::parent) {
-            for ancestor in dir.ancestors() {
-                let joined = ancestor.join(candidate);
-                if joined.is_file() {
-                    return Some(joined);
-                }
-                // Search the repo root itself, but never above it.
-                if is_repo_root(ancestor) {
-                    return None;
-                }
+        let Some(dir) = self.source_path.as_deref().and_then(Path::parent) else {
+            // No source file to anchor against; the working directory is all there is.
+            return candidate.is_file().then(|| candidate.to_path_buf());
+        };
+
+        for ancestor in self.search_roots(dir) {
+            let joined = ancestor.join(candidate);
+            if joined.is_file() {
+                return Some(joined);
             }
         }
 
-        candidate.is_file().then(|| candidate.to_path_buf())
+        None
+    }
+
+    /// Directories a relative reference may be resolved against, nearest first.
+    fn search_roots<'a>(&self, dir: &'a Path) -> Vec<&'a Path> {
+        match dir.ancestors().find(|ancestor| is_repo_root(ancestor)) {
+            Some(root) => dir
+                .ancestors()
+                .take_while(|ancestor| *ancestor != root)
+                .chain(std::iter::once(root))
+                .collect(),
+            None => vec![dir],
+        }
     }
 
     fn apply_register(&self, registry_override: Option<&Path>) -> Result<String, String> {
@@ -1792,5 +1810,76 @@ mod tests {
             "unexpected resolution: {}",
             resolved[0].1.display()
         );
+    }
+
+    /// The bound must hold even when no ancestor carries a repository marker.
+    /// The earlier implementation only stopped *at* a marker, so a marker-less
+    /// tree still walked to `/` — and every other test here creates a marker,
+    /// so nothing covered it.
+    #[test]
+    fn reference_does_not_escape_a_tree_with_no_repo_marker() {
+        let lab = tempfile::tempdir().expect("tempdir");
+        let outside = lab.path().join("manifests").join("examples");
+        std::fs::create_dir_all(&outside).expect("mkdir outside");
+        std::fs::copy(
+            repo_root()
+                .join("manifests")
+                .join("examples")
+                .join("olmoe-1b-7b-instruct.json"),
+            outside.join("planted.json"),
+        )
+        .expect("plant manifest above the recipe");
+
+        // Deliberately NO .git and NO Cargo.lock anywhere in this tree.
+        let recipes = lab.path().join("looserepo").join("configs").join("recipes");
+        std::fs::create_dir_all(&recipes).expect("mkdir looserepo");
+
+        let recipe_path = recipes.join("nomarker.json");
+        std::fs::write(
+            &recipe_path,
+            r#"{"recipe_id":"nomarker-test","type":"register",
+                "inputs":{"source_manifest":"manifests/examples/planted.json"},
+                "outputs":{"manifest_id":"olmoe-1b-7b-instruct-v1"}}"#,
+        )
+        .expect("write recipe");
+
+        let recipe = Recipe::from_file(&recipe_path).expect("recipe loads");
+        let err = recipe
+            .validate()
+            .expect_err("a marker-less tree must not resolve references above the recipe");
+        assert!(
+            err.contains("could not be resolved"),
+            "unexpected error: {err}"
+        );
+    }
+
+    /// A reference sitting beside the recipe still resolves in a marker-less tree.
+    #[test]
+    fn marker_less_tree_still_resolves_a_sibling_reference() {
+        let lab = tempfile::tempdir().expect("tempdir");
+        let dir = lab.path().join("loose");
+        std::fs::create_dir_all(&dir).expect("mkdir loose");
+        std::fs::copy(
+            repo_root()
+                .join("manifests")
+                .join("examples")
+                .join("olmoe-1b-7b-instruct.json"),
+            dir.join("beside.json"),
+        )
+        .expect("copy manifest beside the recipe");
+
+        let recipe_path = dir.join("sibling.json");
+        std::fs::write(
+            &recipe_path,
+            r#"{"recipe_id":"sibling-test","type":"register",
+                "inputs":{"source_manifest":"beside.json"},
+                "outputs":{"manifest_id":"olmoe-1b-7b-instruct-v1"}}"#,
+        )
+        .expect("write recipe");
+
+        let recipe = Recipe::from_file(&recipe_path).expect("recipe loads");
+        recipe
+            .validate()
+            .expect("a sibling reference must still resolve");
     }
 }

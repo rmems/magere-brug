@@ -1,0 +1,20 @@
+crates/magere-cli/src/pack.rs
+  s_ddc05feec482e2::t_a9b5fa9c8e2b9b 940-960
+  s_ddc05feec482e2::t_4920927e28f928 924
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "8ac8335b1cbbfec30676e6bc1cf6565038e7f3aa",
+  "prompts": {},
+  "sessions": {
+    "s_ddc05feec482e2": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "bb500915-cbd1-43f7-8b94-3c88ff6ee554",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Raul Montoya Cardenas <montoyaraul34@gmail.com>"
+    }
+  }
+}

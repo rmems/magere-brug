@@ -1,0 +1,23 @@
+crates/magere-cli/src/recipe.rs
+  s_ddc05feec482e2::t_6faf5bb09b8711 725-745
+  s_ddc05feec482e2::t_6c397fc077a705 758-764,766-770
+  s_ddc05feec482e2::t_da3bae0d3da11f 964-982
+  s_ddc05feec482e2::t_805766a77a959b 1024,1029-1036
+  s_ddc05feec482e2::t_5ad3ff9cbcc088 795-801,815-817
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "25adae32326e8340a3f66b50f93a26cf60e033f6",
+  "prompts": {},
+  "sessions": {
+    "s_ddc05feec482e2": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "bb500915-cbd1-43f7-8b94-3c88ff6ee554",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Raul Montoya Cardenas <montoyaraul34@gmail.com>"
+    }
+  }
+}

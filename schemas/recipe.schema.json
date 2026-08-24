@@ -1,7 +1,7 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "magere-brug Recipe",
-  "description": "Thin recipe registration schema for referencing source manifests and GOZ1 packs. Full runners live in later issues (pack #19, SAAQ #8).",
+  "description": "Recipe schema for referencing source manifests and GOZ1 packs, and for driving the SAAQ runner (`magere run-saaq`). The recipe-driven pack runner lives in a later issue.",
   "type": "object",
   "required": [
     "recipe_id",
@@ -63,6 +63,225 @@
         "output_dir": {
           "type": "string",
           "description": "Directory for pack or SAAQ run outputs"
+        }
+      },
+      "additionalProperties": false
+    },
+    "saaq": {
+      "type": "object",
+      "description": "SAAQ runner configuration, consumed by `magere run-saaq` for recipes of type \"saaq\". Drives the CPU-only validation pipeline in magere-corinth-core (TelemetrySnapshot -> TelemetryFunnel -> Projector -> SnnLatentCalibrator). Every field has a documented default, so a thin saaq stub still runs.",
+      "properties": {
+        "projection_mode": {
+          "type": "string",
+          "enum": [
+            "RateSum",
+            "TemporalHistogram",
+            "MembraneSnapshot",
+            "SpikingTernary"
+          ],
+          "default": "SpikingTernary",
+          "description": "Projector strategy used to turn hidden spike activity into the dense embedding (magere-corinth-core ProjectionMode)."
+        },
+        "snn_steps": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 20,
+          "description": "SNN time-steps expanded per telemetry snapshot by the telemetry funnel."
+        },
+        "thresholds": {
+          "type": "array",
+          "items": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          },
+          "minItems": 4,
+          "maxItems": 4,
+          "default": [
+            1.0,
+            5.0,
+            1.0,
+            5.0
+          ],
+          "description": "Per-channel TelemetryEncoder thresholds, in channel order: gpu_temp_c, gpu_power_w, cpu_tctl_c, cpu_package_power_w."
+        },
+        "update_rule": {
+          "type": "string",
+          "enum": [
+            "LegacyV1_0",
+            "SaaqV1_5SqrtRate"
+          ],
+          "default": "LegacyV1_0",
+          "description": "SAAQ delta-Q update rule (magere-corinth-core SaaqUpdateRule). Under dual_rule it selects which rule fills the legacy saaq_delta_q_{prev,target} columns."
+        },
+        "dual_rule": {
+          "type": "boolean",
+          "default": false,
+          "description": "Observe both SAAQ rules through SnnDualLatentCalibrator so each CSV row carries the legacy and v1.5 trajectories side by side."
+        },
+        "num_experts": {
+          "type": "integer",
+          "minimum": 2,
+          "default": 8,
+          "description": "Number of experts the projector embedding is split across to derive the routing distribution behind the routing_entropy column."
+        },
+        "top_k": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 1,
+          "description": "Experts recorded in selected_experts each tick; must not exceed num_experts."
+        },
+        "telemetry": {
+          "type": "object",
+          "description": "Source of the TelemetrySnapshot stream. Defaults to a synthetic ramp so a checked-in recipe runs with no external data.",
+          "properties": {
+            "source": {
+              "type": "string",
+              "enum": [
+                "synthetic",
+                "csv"
+              ],
+              "default": "synthetic",
+              "description": "synthetic: each snapshot is a pure function of the tick index (no RNG, no wall clock, byte-reproducible CSV). csv: snapshots are replayed from the file at `path`."
+            },
+            "ticks": {
+              "type": "integer",
+              "minimum": 1,
+              "default": 16,
+              "description": "synthetic only - number of telemetry ticks to replay; equals the emitted CSV row count."
+            },
+            "tick_interval_ms": {
+              "type": "integer",
+              "minimum": 1,
+              "default": 250,
+              "description": "synthetic only - milliseconds between ticks; also fixes the emitted timestamp_ms column."
+            },
+            "start_timestamp_ms": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0,
+              "description": "synthetic only - timestamp_ms of tick 0. Recipe-derived, never read from the system clock."
+            },
+            "start": {
+              "type": "object",
+              "description": "synthetic only - channel values at tick 0.",
+              "required": [
+                "gpu_temp_c",
+                "gpu_power_w",
+                "cpu_tctl_c",
+                "cpu_package_power_w"
+              ],
+              "properties": {
+                "gpu_temp_c": {
+                  "type": "number"
+                },
+                "gpu_power_w": {
+                  "type": "number"
+                },
+                "cpu_tctl_c": {
+                  "type": "number"
+                },
+                "cpu_package_power_w": {
+                  "type": "number"
+                }
+              },
+              "additionalProperties": false
+            },
+            "delta": {
+              "type": "object",
+              "description": "synthetic only - per-tick channel increment; channel c at tick i is start.c + delta.c * i.",
+              "required": [
+                "gpu_temp_c",
+                "gpu_power_w",
+                "cpu_tctl_c",
+                "cpu_package_power_w"
+              ],
+              "properties": {
+                "gpu_temp_c": {
+                  "type": "number"
+                },
+                "gpu_power_w": {
+                  "type": "number"
+                },
+                "cpu_tctl_c": {
+                  "type": "number"
+                },
+                "cpu_package_power_w": {
+                  "type": "number"
+                }
+              },
+              "additionalProperties": false
+            },
+            "path": {
+              "type": "string",
+              "minLength": 1,
+              "description": "csv only - telemetry CSV carrying the columns timestamp_ms, gpu_temp_c, gpu_power_w, cpu_tctl_c and cpu_package_power_w in any order."
+            }
+          },
+          "additionalProperties": false,
+          "allOf": [
+            {
+              "if": {
+                "properties": {
+                  "source": {
+                    "const": "csv"
+                  }
+                },
+                "required": [
+                  "source"
+                ]
+              },
+              "then": {
+                "required": [
+                  "path"
+                ],
+                "not": {
+                  "anyOf": [
+                    {
+                      "required": [
+                        "ticks"
+                      ]
+                    },
+                    {
+                      "required": [
+                        "tick_interval_ms"
+                      ]
+                    },
+                    {
+                      "required": [
+                        "start_timestamp_ms"
+                      ]
+                    },
+                    {
+                      "required": [
+                        "start"
+                      ]
+                    },
+                    {
+                      "required": [
+                        "delta"
+                      ]
+                    }
+                  ]
+                }
+              }
+            },
+            {
+              "if": {
+                "properties": {
+                  "source": {
+                    "const": "synthetic"
+                  }
+                }
+              },
+              "then": {
+                "not": {
+                  "required": [
+                    "path"
+                  ]
+                }
+              }
+            }
+          ]
         }
       },
       "additionalProperties": false
@@ -151,6 +370,27 @@
               "source_manifest"
             ]
           }
+        }
+      }
+    },
+    {
+      "if": {
+        "not": {
+          "properties": {
+            "type": {
+              "const": "saaq"
+            }
+          },
+          "required": [
+            "type"
+          ]
+        }
+      },
+      "then": {
+        "not": {
+          "required": [
+            "saaq"
+          ]
         }
       }
     }

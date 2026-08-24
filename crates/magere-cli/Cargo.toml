@@ -19,6 +19,7 @@ tracing = "0.1.44"
 tracing-subscriber = "0.3.23"
 miette = "7.6.0"
 chrono = { version = "0.4", features = ["serde"] }
+magere-corinth-core = { path = "../magere-corinth-core" }
 
 [dev-dependencies]
 tempfile = "3.8.1"

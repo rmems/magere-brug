@@ -1041,6 +1041,7 @@ dependencies = [
  "chrono",
  "clap",
  "jsonschema",
+ "magere-corinth-core",
  "miette",
  "serde",
  "serde_json",

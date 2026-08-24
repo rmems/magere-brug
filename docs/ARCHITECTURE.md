@@ -251,7 +251,10 @@ Relative `inputs.*` references are resolved against the recipe file's directory 
 
 `magere recipe validate` runs the JSON Schema first, then the semantic checks the schema cannot express:
 
-- The referenced `source_manifest` / `goz1_ref` resolves on disk and parses **and validates** as a manifest
+- The referenced `source_manifest` / `goz1_ref` resolves on disk and parses **and validates** as a
+  manifest. This applies to `*.json` path references only: a reference that does not name a JSON
+  file is treated as a registry id and is *not* resolved or validated by `magere recipe validate`
+  (`magere recipe apply` rejects registry-id references outright)
 - `inputs.source_format` matches the manifest's `source_artifact.format`
 - For `register`: `outputs.manifest_id` matches the manifest's `metadata.manifest_id`, and `outputs.generated_format` matches the manifest's `generated_artifact.format`
 - `goz1_pack` emits `goz1`; `ternary_pack` emits `goz1` or `ternary`

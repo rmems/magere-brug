@@ -1043,8 +1043,8 @@ mod tests {
         }
 
         assert!(
-            checked >= 3,
-            "expected the register + pack recipe examples to be present, found {checked}"
+            checked >= 5,
+            "expected all five register + pack recipe examples to be present, found {checked}"
         );
     }
 

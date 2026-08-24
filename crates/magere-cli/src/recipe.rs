@@ -722,6 +722,27 @@ impl Recipe {
     /// workspace resolves registry ids yet — `apply` rejects them outright — so a
     /// non-path reference is a typo, not a feature, and is refused rather than
     /// silently skipping every cross-check below.
+    /// Input references paired with the file each one actually resolved to.
+    ///
+    /// Only path-shaped references that resolve are reported; registry ids and
+    /// unresolvable references are skipped (validation reports those as errors).
+    pub fn resolved_references(&self) -> Vec<(String, PathBuf)> {
+        let mut out = Vec::new();
+        for (label, reference) in [
+            ("inputs.source_manifest", self.source_manifest_ref()),
+            ("inputs.goz1_ref", self.goz1_ref()),
+        ] {
+            if let Some(reference) = reference
+                && reference_is_manifest_path(reference)
+                && !reference_escapes_upward(reference)
+                && let Some(resolved) = self.resolve_reference(reference)
+            {
+                out.push((label.to_string(), resolved));
+            }
+        }
+        out
+    }
+
     fn load_referenced_manifest(
         &self,
         reference: &str,
@@ -734,8 +755,19 @@ impl Recipe {
             ));
         }
 
+        if reference_escapes_upward(reference) {
+            return Err(format!(
+                "{label} '{reference}' must not contain '..' segments; recipe inputs are \
+                 resolved within the repository that contains the recipe"
+            ));
+        }
+
         let resolved = self.resolve_reference(reference).ok_or_else(|| {
-            format!("{label} '{reference}' could not be resolved to a file on disk")
+            format!(
+                "{label} '{reference}' could not be resolved to a file on disk \
+                 (searched the recipe's directory up to the repository root, then the \
+                 working directory)"
+            )
         })?;
 
         let manifest = Manifest::from_file(&resolved).map_err(|e| {
@@ -760,6 +792,13 @@ impl Recipe {
     /// Relative references are tried against the recipe file's directory and each
     /// of its ancestors (so `configs/recipes/x.json` can name a repo-root-relative
     /// `manifests/examples/y.json`), then against the working directory.
+    ///
+    /// The ancestor walk **stops at the repository root** that contains the recipe.
+    /// Without that bound the walk runs all the way to `/`, which made resolution
+    /// depend on how the recipe was addressed: an absolute recipe path could satisfy
+    /// a reference from a sibling checkout or a parent directory outside the repo,
+    /// so the same file validated locally and failed in CI (where paths are relative
+    /// and the walk happens to stop at the repo root anyway).
     fn resolve_reference(&self, reference: &str) -> Option<PathBuf> {
         let candidate = Path::new(reference);
 
@@ -772,6 +811,10 @@ impl Recipe {
                 let joined = ancestor.join(candidate);
                 if joined.is_file() {
                     return Some(joined);
+                }
+                // Search the repo root itself, but never above it.
+                if is_repo_root(ancestor) {
+                    return None;
                 }
             }
         }
@@ -918,6 +961,25 @@ fn reference_is_manifest_path(reference: &str) -> bool {
     reference.ends_with(".json")
 }
 
+/// True when a reference contains a `..` path segment.
+///
+/// Checked as a segment rather than a substring so that legitimate names
+/// containing dots (`model..v2.json`) are not rejected.
+fn reference_escapes_upward(reference: &str) -> bool {
+    Path::new(reference)
+        .components()
+        .any(|component| matches!(component, std::path::Component::ParentDir))
+}
+
+/// Marks the boundary the reference search must not cross.
+///
+/// `.git` is a directory in a normal clone and a file in a linked worktree, so
+/// `exists()` covers both; `Cargo.lock` is the fallback for an exported tree
+/// with no VCS metadata.
+fn is_repo_root(dir: &Path) -> bool {
+    dir.join(".git").exists() || dir.join("Cargo.lock").is_file()
+}
+
 fn validate_against_schema(instance: &Value) -> Result<(), String> {
     let schema: Value = serde_json::from_str(RECIPE_SCHEMA)
         .map_err(|e| format!("embedded recipe schema is not valid JSON: {e}"))?;
@@ -959,12 +1021,19 @@ pub fn run(command: RecipeCommands) -> Result<String, String> {
 fn validate_command(path: &Path) -> Result<String, String> {
     let recipe = Recipe::from_file(path).map_err(|e| format!("Failed to load recipe: {e}"))?;
     recipe.validate()?;
-    Ok(format!(
+    let mut out = format!(
         "✓ Recipe '{}' is valid (type: {}, runner: {})",
         recipe.recipe_id,
         recipe.recipe_type,
         recipe.runner_owner()
-    ))
+    );
+    // Report what each reference actually resolved to. Ancestor-relative
+    // resolution means a nearer file can shadow the intended one; printing the
+    // winner makes that visible instead of silent.
+    for (label, resolved) in recipe.resolved_references() {
+        out.push_str(&format!("\n  {label} -> {}", resolved.display()));
+    }
+    Ok(out)
 }
 
 fn inspect_command(path: &Path) -> Result<String, String> {
@@ -1636,5 +1705,92 @@ mod tests {
             .validate()
             .expect_err("a saaq recipe must declare where the run lands");
         assert!(err.contains("output_dir"), "{err}");
+    }
+
+    /// A reference must not resolve to a file above the repository that contains
+    /// the recipe. Before the ancestor walk was bounded this passed when the recipe
+    /// was addressed by absolute path and failed when addressed relatively — the
+    /// same file, the same cwd, two different answers.
+    #[test]
+    fn reference_does_not_resolve_above_the_repo_root() {
+        let lab = tempfile::tempdir().expect("tempdir");
+        let outside = lab.path().join("manifests").join("examples");
+        std::fs::create_dir_all(&outside).expect("mkdir outside");
+        std::fs::copy(
+            repo_root()
+                .join("manifests")
+                .join("examples")
+                .join("olmoe-1b-7b-instruct.json"),
+            outside.join("planted.json"),
+        )
+        .expect("plant manifest above the repo root");
+
+        let recipes = lab.path().join("fakerepo").join("configs").join("recipes");
+        std::fs::create_dir_all(&recipes).expect("mkdir fakerepo");
+        std::fs::write(lab.path().join("fakerepo").join("Cargo.lock"), "").expect("repo marker");
+
+        let recipe_path = recipes.join("escape.json");
+        std::fs::write(
+            &recipe_path,
+            r#"{"recipe_id":"escape-test","type":"register",
+                "inputs":{"source_manifest":"manifests/examples/planted.json"},
+                "outputs":{"manifest_id":"olmoe-1b-7b-instruct-v1"}}"#,
+        )
+        .expect("write recipe");
+
+        let recipe = Recipe::from_file(&recipe_path).expect("recipe loads");
+        let err = recipe
+            .validate()
+            .expect_err("a reference above the repo root must not resolve");
+        assert!(
+            err.contains("could not be resolved"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn reference_with_parent_dir_segments_is_rejected() {
+        let recipe = Recipe::from_json(
+            r#"{"recipe_id":"dotdot-test","type":"register",
+                "inputs":{"source_manifest":"../../secret/outside.json"},
+                "outputs":{"manifest_id":"whatever-v1"}}"#,
+        )
+        .expect("recipe parses");
+
+        let err = recipe.validate().expect_err("'..' must be rejected");
+        assert!(
+            err.contains("must not contain '..'"),
+            "unexpected error: {err}"
+        );
+    }
+
+    /// Dots inside a filename are not path traversal.
+    #[test]
+    fn dots_inside_a_filename_are_not_treated_as_traversal() {
+        assert!(!reference_escapes_upward(
+            "manifests/examples/model..v2.json"
+        ));
+        assert!(!reference_escapes_upward("manifests/examples/m.json"));
+        assert!(reference_escapes_upward("../m.json"));
+        assert!(reference_escapes_upward("a/../../m.json"));
+    }
+
+    #[test]
+    fn validate_reports_the_file_each_reference_resolved_to() {
+        let path = repo_root()
+            .join("configs")
+            .join("recipes")
+            .join("register-gguf-example.json");
+        let recipe = Recipe::from_file(&path).expect("recipe loads");
+        recipe.validate().expect("example is valid");
+
+        let resolved = recipe.resolved_references();
+        assert_eq!(resolved.len(), 1, "expected one resolved input reference");
+        assert_eq!(resolved[0].0, "inputs.source_manifest");
+        assert!(
+            resolved[0].1.ends_with("olmoe-1b-7b-instruct.json"),
+            "unexpected resolution: {}",
+            resolved[0].1.display()
+        );
     }
 }

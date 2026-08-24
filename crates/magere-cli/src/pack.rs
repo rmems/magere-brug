@@ -239,9 +239,12 @@ pub fn run_pack_recipe(
         .as_ref()
         .and_then(|o| o.manifest_id.clone())
         .unwrap_or_else(|| format!("{}-goz1", source.metadata.manifest_id));
-    let stem = file_stem_for(&manifest_id)?;
-    let pack_path = output_dir.join(format!("{}.goz1", stem));
-    let manifest_path = output_dir.join(format!("{}.manifest.json", stem));
+    // Normalize once: the file stem and the identity recorded in the emitted manifest must
+    // agree, so a padded id like " pack-v1 " cannot name the file `pack-v1.goz1` while
+    // recording a different `metadata.manifest_id`.
+    let manifest_id = file_stem_for(&manifest_id)?.to_string();
+    let pack_path = output_dir.join(format!("{}.goz1", manifest_id));
+    let manifest_path = output_dir.join(format!("{}.manifest.json", manifest_id));
 
     // --- Build the QuantizeConfig -------------------------------------------------------
     let input_dir = pack_config
@@ -974,6 +977,28 @@ mod tests {
         let h = harness_from(dir, &recipe);
         let err = run_pack_recipe(&h.recipe_path, Some(&h.registry_path), None).unwrap_err();
         assert!(err.contains("path separators"), "{}", err);
+    }
+
+    #[test]
+    fn padded_manifest_id_agrees_between_filename_and_manifest() {
+        let dir = TempDir::new().unwrap();
+        let packs = dir.path().join("packs");
+        let mut recipe = base_recipe(&packs);
+        recipe["outputs"]["manifest_id"] = json!("  padded-pack-v1\t");
+        let h = harness_from(dir, &recipe);
+        let outcome = run_pack_recipe(&h.recipe_path, Some(&h.registry_path), None).unwrap();
+
+        // The stem is trimmed ...
+        assert_eq!(
+            outcome.pack_path.file_name().unwrap(),
+            "padded-pack-v1.goz1"
+        );
+        // ... and the recorded identity matches it rather than the padded input.
+        assert_eq!(outcome.manifest.metadata.manifest_id, "padded-pack-v1");
+
+        let reloaded = Manifest::from_file(&outcome.manifest_path).expect("reload manifest");
+        assert!(reloaded.validate().is_ok());
+        assert_eq!(reloaded.metadata.manifest_id, "padded-pack-v1");
     }
 
     #[test]

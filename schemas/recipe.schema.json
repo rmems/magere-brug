@@ -1,7 +1,7 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "magere-brug Recipe",
-  "description": "Thin recipe registration schema for referencing source manifests and GOZ1 packs. Full runners live in later issues (pack #19, SAAQ #8).",
+  "description": "Recipe schema for referencing source manifests and GOZ1 packs. goz1_pack/ternary_pack recipes carrying a `pack` block are executable by `magere pack-goz1`; the SAAQ runner lands in a later issue (#8).",
   "type": "object",
   "required": [
     "recipe_id",
@@ -63,6 +63,47 @@
         "output_dir": {
           "type": "string",
           "description": "Directory for pack or SAAQ run outputs"
+        }
+      },
+      "additionalProperties": false
+    },
+    "pack": {
+      "type": "object",
+      "description": "Pack runner configuration for goz1_pack/ternary_pack recipes, consumed by `magere pack-goz1` and mapped onto magere-grok-process QuantizeConfig. Omit for reference-only recipes that merely point at an existing pack. NOTE: while the packer is a skeleton, `dissect_manifest` is the only field that affects the emitted pack; the rest are validated and recorded but inert -- run_quantize discards the QuantizeConfig entirely.",
+      "required": [
+        "dissect_manifest"
+      ],
+      "properties": {
+        "dissect_manifest": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Path to the xai-dissect DissectManifest JSON (schema_version 1, name_convention xai-dissect-v1) that lists preserve/fp16/ternary_candidates tiers. This is the only pack field that currently affects the emitted bytes: the tensor names and tiers here become the pack's tensor table."
+        },
+        "input_dir": {
+          "type": "string",
+          "minLength": 1,
+          "description": "INERT while the packer is a skeleton: magere-grok-process::stream::run_quantize takes its QuantizeConfig as `_config` and discards it, so this field is validated and recorded but does not affect the emitted bytes. Only `dissect_manifest` does. Becomes live when real tensor loading lands. Directory holding the packable source weights (safetensors shards or a directory of .npy files). Its existence is reported as a note, not required, because the skeleton packer never reads it."
+        },
+        "input_format": {
+          "type": "string",
+          "enum": [
+            "safetensors",
+            "npy_dir"
+          ],
+          "default": "safetensors",
+          "description": "INERT while the packer is a skeleton: magere-grok-process::stream::run_quantize takes its QuantizeConfig as `_config` and discards it, so this field is validated and recorded but does not affect the emitted bytes. Only `dissect_manifest` does. Becomes live when real tensor loading lands. Weight container layout of input_dir; maps to magere-grok-process InputFormat."
+        },
+        "gif_threshold": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "default": 0.05,
+          "description": "INERT while the packer is a skeleton: magere-grok-process::stream::run_quantize takes its QuantizeConfig as `_config` and discards it, so this field is validated and recorded but does not affect the emitted bytes. Only `dissect_manifest` does. Becomes live when real tensor loading lands. GIF saliency threshold ratio used when ternarizing."
+        },
+        "use_embedded_baseline": {
+          "type": "boolean",
+          "default": false,
+          "description": "INERT while the packer is a skeleton: magere-grok-process::stream::run_quantize takes its QuantizeConfig as `_config` and discards it, so this field is validated and recorded but does not affect the emitted bytes. Only `dissect_manifest` does. Becomes live when real tensor loading lands. Use the packer's embedded baseline statistics instead of deriving them from input_dir."
         }
       },
       "additionalProperties": false
@@ -150,6 +191,31 @@
             "required": [
               "source_manifest"
             ]
+          }
+        }
+      }
+    },
+    {
+      "$comment": "A pack block only makes sense on packing recipes. It stays optional so reference-only goz1_pack/ternary_pack stubs remain valid; `magere pack-goz1` requires it at run time.",
+      "if": {
+        "required": [
+          "pack"
+        ]
+      },
+      "then": {
+        "properties": {
+          "type": {
+            "enum": [
+              "goz1_pack",
+              "ternary_pack"
+            ]
+          },
+          "outputs": {
+            "properties": {
+              "generated_format": {
+                "const": "goz1"
+              }
+            }
           }
         }
       }

@@ -76,8 +76,20 @@ const RUN_MANIFEST_SCHEMA: &str = "magere-brug/saaq-run/1";
 /// Human-readable description of the `expert_weights` derivation, copied into
 /// every run manifest so a reader never has to guess how routing entropy was
 /// produced.
-const EXPERT_WEIGHT_SCHEME: &str =
-    "softmax over the per-slice means of num_experts contiguous equal-width embedding slices";
+///
+/// This string is the only disclosure some readers ever see, so it states the
+/// surrogate up front: a run manifest that also names a real MoE source
+/// manifest and a GOZ1 ref would otherwise read as if `routing_entropy` came
+/// from the model's own router.
+const EXPERT_WEIGHT_SCHEME: &str = "PLACEHOLDER SURROGATE - not the model's real MoE router. \
+     Softmax over the per-slice means of num_experts contiguous equal-width slices of the \
+     projector embedding. Derived only from telemetry-driven SNN activity; no model weights \
+     are read. Over a typical run its entropy stays within ~1% of the uniform maximum, so \
+     routing_entropy is near-constant and must not be treated as a live routing signal.";
+
+/// Accepted `outputs.generated_format` values, mirroring the enum in
+/// `schemas/recipe.schema.json`.
+const GENERATED_FORMATS: [&str; 4] = ["goz1", "gguf", "ternary", "binary"];
 
 /// Columns a `csv` telemetry source must provide, in any order.
 const TELEMETRY_CSV_COLUMNS: [&str; 5] = [
@@ -194,7 +206,14 @@ pub enum TelemetrySource {
     /// Snapshots synthesised as a pure function of the tick index.
     Synthetic(SyntheticTelemetry),
     /// Snapshots replayed from a telemetry CSV on disk.
-    Csv { path: PathBuf },
+    ///
+    /// The rows are parsed once, during validation, and carried here: re-reading
+    /// the file at execution time would both duplicate the parse and leave a
+    /// TOCTOU window in which the validated bytes and the executed bytes differ.
+    Csv {
+        path: PathBuf,
+        snapshots: Vec<TelemetrySnapshot>,
+    },
 }
 
 /// Parameters of the deterministic synthetic telemetry ramp.
@@ -230,6 +249,11 @@ pub struct SaaqRunConfig {
     pub update_rule: SaaqUpdateRule,
     pub dual_rule: bool,
     pub num_experts: usize,
+    /// Recorded-only provenance: the calibrator reads `expert_weights` and
+    /// never `selected_experts`, so `top_k` cannot change `latent_telemetry.csv`
+    /// — two runs differing only in `top_k` are byte-identical. It is validated
+    /// and echoed into `run_manifest.json` to document the intended routing
+    /// fan-out for the downstream handoff, not because it steers this run.
     pub top_k: usize,
     pub telemetry: TelemetrySource,
 }
@@ -377,10 +401,25 @@ impl SaaqRunConfig {
         };
 
         let num_experts = match saaq.num_experts {
-            Some(value) if value >= 2 => value as usize,
-            Some(value) => {
+            Some(value) if value >= 2 && value <= magere_corinth_core::EMBEDDING_DIM as i64 => {
+                value as usize
+            }
+            Some(value) if value < 2 => {
                 return Err(format!(
                     "saaq.num_experts must be >= 2 for routing entropy to be defined (got {value})"
+                ));
+            }
+            Some(value) => {
+                // Slices are `ceil(EMBEDDING_DIM / num_experts)` wide, so beyond
+                // one position per expert the trailing experts get empty slices
+                // that score exactly 0.0, tie in the softmax, and drag entropy
+                // toward its uniform maximum — inflating `routing_entropy`
+                // without adding signal. Capping here also bounds the
+                // allocation the value drives.
+                return Err(format!(
+                    "saaq.num_experts must be <= the projector embedding dim ({}) so every \
+                     expert owns at least one embedding position; got {value}",
+                    magere_corinth_core::EMBEDDING_DIM
                 ));
             }
             None => DEFAULT_NUM_EXPERTS,
@@ -395,6 +434,20 @@ impl SaaqRunConfig {
             }
             None => DEFAULT_TOP_K.min(num_experts),
         };
+
+        // `run-saaq` reads the recipe directly rather than through
+        // recipe.schema.json, so the schema's enum is not otherwise enforced
+        // here and an unsupported value would be copied verbatim into the run
+        // manifest's handoff record.
+        if let Some(format) = outputs.generated_format.as_deref()
+            && !GENERATED_FORMATS.contains(&format)
+        {
+            return Err(format!(
+                "outputs.generated_format must be one of {}; got '{}'",
+                GENERATED_FORMATS.join(", "),
+                format
+            ));
+        }
 
         let telemetry = parse_telemetry(saaq.telemetry.unwrap_or_default(), recipe_path)?;
 
@@ -565,9 +618,13 @@ fn parse_telemetry(raw: RawTelemetry, recipe_path: &Path) -> Result<TelemetrySou
                 )?;
             let resolved =
                 resolve_input_ref("saaq.telemetry.path", reference, recipe_path)?.resolved_path;
-            // Parse eagerly so a malformed CSV fails validation, not mid-run.
-            read_telemetry_csv(&resolved)?;
-            Ok(TelemetrySource::Csv { path: resolved })
+            // Parse eagerly so a malformed CSV fails validation, not mid-run,
+            // and keep the rows so execution never re-reads the file.
+            let snapshots = read_telemetry_csv(&resolved)?;
+            Ok(TelemetrySource::Csv {
+                path: resolved,
+                snapshots,
+            })
         }
         other => Err(format!(
             "saaq.telemetry.source '{other}' is not supported; expected one of: synthetic, csv"
@@ -582,17 +639,26 @@ fn channels_are_finite(channels: &Channels) -> bool {
         && channels.cpu_package_power_w.is_finite()
 }
 
+/// Files that mark the root of the tree a recipe is allowed to reference.
+const REPO_ROOT_MARKERS: [&str; 3] = ["Cargo.toml", ".git", "schemas"];
+
 /// Resolve a recipe input reference to an existing file.
 ///
 /// Recipes are checked in with repo-root-relative references
 /// (`manifests/examples/...`) but are themselves nested (`configs/recipes/...`),
-/// so the reference is tried, in order, against:
+/// so the reference is tried against the recipe's own directory and then each
+/// ancestor **up to and including the first one that looks like a repo root**
+/// (see [`REPO_ROOT_MARKERS`]). An absolute reference is taken as written.
 ///
-/// 1. the path exactly as written (absolute, or relative to the process CWD);
-/// 2. the recipe's own directory, then each of its ancestors.
+/// The walk stops at the repo root deliberately: an unbounded walk to `/` let a
+/// reference like `etc/hostname` or `../../../etc/passwd` resolve to a real
+/// system file and be recorded as the run's provenance. For the same reason the
+/// CWD-relative interpretation is only tried *after* the recipe-anchored walk,
+/// so running a checked-in recipe by absolute path cannot silently pick up a
+/// same-named decoy sitting in the current directory.
 ///
-/// The first existing file wins, which makes a checked-in recipe runnable from
-/// any working directory without absolute paths.
+/// The resolved path is canonicalised before it is recorded, so the run
+/// manifest names the file that was actually read.
 fn resolve_input_ref(
     field: &str,
     reference: &str,
@@ -602,28 +668,44 @@ fn resolve_input_ref(
         return Err(format!("{field} must not be empty"));
     }
 
-    let direct = PathBuf::from(reference);
-    if direct.is_file() {
-        return Ok(ResolvedRef {
+    let resolved = |candidate: PathBuf| -> ResolvedRef {
+        ResolvedRef {
             reference: reference.to_string(),
-            resolved_path: direct,
-        });
+            resolved_path: candidate.canonicalize().unwrap_or(candidate),
+        }
+    };
+
+    let direct = PathBuf::from(reference);
+    if direct.is_absolute() {
+        if direct.is_file() {
+            return Ok(resolved(direct));
+        }
+        return Err(format!("{field} '{reference}' does not resolve to a file"));
     }
 
+    // Recipe-anchored walk first, bounded at the repo root.
     let recipe_dir = recipe_path.parent().unwrap_or(Path::new("."));
     for ancestor in recipe_dir.ancestors() {
         let candidate = ancestor.join(reference);
         if candidate.is_file() {
-            return Ok(ResolvedRef {
-                reference: reference.to_string(),
-                resolved_path: candidate,
-            });
+            return Ok(resolved(candidate));
+        }
+        let is_root = REPO_ROOT_MARKERS
+            .iter()
+            .any(|marker| ancestor.join(marker).exists());
+        if is_root {
+            break;
         }
     }
 
+    // Only then fall back to the process CWD.
+    if direct.is_file() {
+        return Ok(resolved(direct));
+    }
+
     Err(format!(
-        "{field} '{reference}' does not resolve to a file (looked relative to the current \
-         directory and to '{}' and its parents)",
+        "{field} '{reference}' does not resolve to a file within the recipe's tree (looked \
+         relative to '{}' up to the repository root, then relative to the current directory)",
         recipe_dir.display()
     ))
 }
@@ -652,15 +734,31 @@ fn read_telemetry_csv(path: &Path) -> Result<Vec<TelemetrySnapshot>, String> {
     let contents = std::fs::read_to_string(path)
         .map_err(|e| format!("Failed to read telemetry CSV '{}': {}", path.display(), e))?;
 
+    // Line numbers are captured before blank lines are filtered so an error
+    // points at the line the reader would find in an editor, not at an index
+    // into the surviving data rows.
     let mut lines = contents
         .lines()
-        .map(str::trim)
-        .filter(|line| !line.is_empty());
+        .enumerate()
+        .map(|(index, line)| (index + 1, line.trim()))
+        .filter(|(_, line)| !line.is_empty());
 
-    let header = lines
+    let (_, header) = lines
         .next()
         .ok_or_else(|| format!("Telemetry CSV '{}' is empty", path.display()))?;
     let columns: Vec<&str> = header.split(',').map(str::trim).collect();
+
+    // A duplicated required column would otherwise silently bind to whichever
+    // copy came first, making the run depend on column order.
+    for name in TELEMETRY_CSV_COLUMNS {
+        if columns.iter().filter(|column| **column == name).count() > 1 {
+            return Err(format!(
+                "Telemetry CSV '{}' declares column '{}' more than once",
+                path.display(),
+                name
+            ));
+        }
+    }
 
     let mut indices = [0usize; TELEMETRY_CSV_COLUMNS.len()];
     for (slot, name) in indices.iter_mut().zip(TELEMETRY_CSV_COLUMNS) {
@@ -678,14 +776,14 @@ fn read_telemetry_csv(path: &Path) -> Result<Vec<TelemetrySnapshot>, String> {
     }
 
     let mut snapshots = Vec::new();
-    for (row, line) in lines.enumerate() {
+    for (line_no, line) in lines {
         let fields: Vec<&str> = line.split(',').map(str::trim).collect();
         let field = |index: usize, name: &str| -> Result<&str, String> {
             fields.get(index).copied().ok_or_else(|| {
                 format!(
-                    "Telemetry CSV '{}' row {} has no value for column '{}'",
+                    "Telemetry CSV '{}' line {} has no value for column '{}'",
                     path.display(),
-                    row + 1,
+                    line_no,
                     name
                 )
             })
@@ -694,9 +792,9 @@ fn read_telemetry_csv(path: &Path) -> Result<Vec<TelemetrySnapshot>, String> {
             let raw = field(index, name)?;
             let value = raw.parse::<f32>().map_err(|e| {
                 format!(
-                    "Telemetry CSV '{}' row {} column '{}': {}",
+                    "Telemetry CSV '{}' line {} column '{}': {}",
                     path.display(),
-                    row + 1,
+                    line_no,
                     name,
                     e
                 )
@@ -707,9 +805,9 @@ fn read_telemetry_csv(path: &Path) -> Result<Vec<TelemetrySnapshot>, String> {
             // non-finite values reach the encoder and the emitted latent CSV.
             if !value.is_finite() {
                 return Err(format!(
-                    "Telemetry CSV '{}' row {} column '{}': value must be finite (got '{}')",
+                    "Telemetry CSV '{}' line {} column '{}': value must be finite (got '{}')",
                     path.display(),
-                    row + 1,
+                    line_no,
                     name,
                     raw
                 ));
@@ -721,9 +819,9 @@ fn read_telemetry_csv(path: &Path) -> Result<Vec<TelemetrySnapshot>, String> {
             .parse::<u64>()
             .map_err(|e| {
                 format!(
-                    "Telemetry CSV '{}' row {} column '{}': {}",
+                    "Telemetry CSV '{}' line {} column '{}': {}",
                     path.display(),
-                    row + 1,
+                    line_no,
                     TELEMETRY_CSV_COLUMNS[0],
                     e
                 )
@@ -743,6 +841,23 @@ fn read_telemetry_csv(path: &Path) -> Result<Vec<TelemetrySnapshot>, String> {
             "Telemetry CSV '{}' has a header but no data rows",
             path.display()
         ));
+    }
+
+    // `SnnLatentCalibrator::window_dt_ms` only measures a real window when the
+    // timestamp advances; a duplicate or backwards row silently falls back to a
+    // 1 ms window, which inflates the firing-rate and membrane-derivative
+    // columns instead of reporting the malformed capture. Reject it up front so
+    // concatenated or unsorted captures fail loudly.
+    for pair in snapshots.windows(2) {
+        if pair[1].timestamp_ms <= pair[0].timestamp_ms {
+            return Err(format!(
+                "Telemetry CSV '{}' timestamps must strictly increase: row with \
+                 timestamp_ms {} does not advance past the preceding {}",
+                path.display(),
+                pair[1].timestamp_ms,
+                pair[0].timestamp_ms
+            ));
+        }
     }
 
     Ok(snapshots)
@@ -869,7 +984,7 @@ pub fn execute(config: &SaaqRunConfig) -> Result<SaaqRunReport, String> {
         TelemetrySource::Synthetic(synthetic) => (0..synthetic.ticks)
             .map(|tick| synthetic_snapshot(synthetic, tick))
             .collect::<Vec<_>>(),
-        TelemetrySource::Csv { path } => read_telemetry_csv(path)?,
+        TelemetrySource::Csv { snapshots, .. } => snapshots.clone(),
     };
 
     std::fs::create_dir_all(&config.output_dir).map_err(|e| {
@@ -882,6 +997,31 @@ pub fn execute(config: &SaaqRunConfig) -> Result<SaaqRunReport, String> {
 
     let latent_csv_path = config.output_dir.join(LATENT_CSV_FILE);
     let run_manifest_path = config.output_dir.join(RUN_MANIFEST_FILE);
+
+    // The emitted latent CSV carries every telemetry input column (plus the
+    // derived ones the reader ignores), so a previous run's output is itself a
+    // valid `source: "csv"` input. Replaying one in place would read it into
+    // memory and then truncate it here, destroying the source and leaving a run
+    // manifest whose recorded input path now names the output. Refuse instead.
+    if let TelemetrySource::Csv { path, .. } = &config.telemetry {
+        let same = match (path.canonicalize(), latent_csv_path.canonicalize()) {
+            (Ok(input), Ok(output)) => input == output,
+            // The output does not exist yet on a first run, so fall back to
+            // comparing the input against the canonicalised output directory.
+            _ => match (path.canonicalize(), config.output_dir.canonicalize()) {
+                (Ok(input), Ok(dir)) => input == dir.join(LATENT_CSV_FILE),
+                _ => false,
+            },
+        };
+        if same {
+            return Err(format!(
+                "saaq.telemetry.path '{}' resolves to this run's own output '{}'; \
+                 pick a different --output-dir so the replay does not overwrite its source",
+                path.display(),
+                latent_csv_path.display()
+            ));
+        }
+    }
 
     let mut funnel = TelemetryFunnel::new(config.thresholds, config.snn_steps);
     let mut projector =
@@ -972,6 +1112,10 @@ fn build_run_manifest(
             Some(resolved) => serde_json::json!({
                 "ref": resolved.reference,
                 "resolved_path": resolved.resolved_path.display().to_string(),
+                // A path is a mutable reference; without the digest the manifest
+                // cannot say which bytes stood behind this run's provenance.
+                "sha256": checksum::compute_file_sha256(&resolved.resolved_path)
+                    .unwrap_or_else(|_| "unavailable".into()),
             }),
             None => serde_json::Value::Null,
         }
@@ -987,9 +1131,13 @@ fn build_run_manifest(
             "delta": channels_json(&synthetic.delta),
             "note": "channel c at tick i = start.c + delta.c * i; timestamps are recipe-derived, not wall-clock",
         }),
-        TelemetrySource::Csv { path } => serde_json::json!({
+        TelemetrySource::Csv { path, .. } => serde_json::json!({
             "source": "csv",
             "path": path.display().to_string(),
+            // The path alone is a mutable reference: without the digest of the
+            // bytes that actually drove this run, the manifest cannot be used
+            // to verify the run was reproduced from the same input.
+            "sha256": checksum::compute_file_sha256(path).unwrap_or_else(|_| "unavailable".into()),
             "ticks": snapshots.len(),
         }),
     };
@@ -1399,6 +1547,109 @@ mod tests {
     }
 
     #[test]
+    fn rejects_generated_format_outside_the_schema_enum() {
+        let out = TempDir::new().unwrap();
+        // "awq" is explicitly removed from this repo; it must not reach a run
+        // manifest just because run-saaq bypasses the JSON schema.
+        let json = recipe_json(2, "").replace(
+            "\"recipe_id\": \"unit-test-saaq\"",
+            "\"recipe_id\": \"unit-test-saaq\",\n  \"outputs\": { \"generated_format\": \"awq\" }",
+        );
+        let error = config_from(&json, out.path()).unwrap_err();
+        assert!(
+            error.contains("generated_format"),
+            "unexpected error: {error}"
+        );
+        assert!(error.contains("awq"), "unexpected error: {error}");
+    }
+
+    #[test]
+    fn accepts_every_schema_generated_format() {
+        for format in GENERATED_FORMATS {
+            let out = TempDir::new().unwrap();
+            let json = recipe_json(2, "").replace(
+                "\"recipe_id\": \"unit-test-saaq\"",
+                &format!(
+                    "\"recipe_id\": \"unit-test-saaq\",\n  \"outputs\": {{ \"generated_format\": \"{format}\" }}"
+                ),
+            );
+            assert!(
+                config_from(&json, out.path()).is_ok(),
+                "format '{format}' should be accepted"
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_num_experts_above_the_embedding_dim() {
+        let out = TempDir::new().unwrap();
+        // Beyond one embedding position per expert the trailing slices are
+        // empty, tie at 0.0, and inflate routing entropy.
+        let json = recipe_json(2, "").replace("\"num_experts\": 8", "\"num_experts\": 900000000");
+        let error = config_from(&json, out.path()).unwrap_err();
+        assert!(error.contains("num_experts"), "unexpected error: {error}");
+        assert!(
+            error.contains(&magere_corinth_core::EMBEDDING_DIM.to_string()),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[test]
+    fn input_refs_do_not_escape_the_repository_tree() {
+        let out = TempDir::new().unwrap();
+        // An unbounded ancestor walk used to resolve this to /etc/hostname and
+        // record a system file as the run's provenance.
+        let json = recipe_json(2, "").replace(
+            example_manifest().display().to_string().as_str(),
+            "etc/hostname",
+        );
+        let error = config_from(&json, out.path()).unwrap_err();
+        assert!(
+            error.contains("source_manifest"),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[test]
+    fn top_k_cannot_change_the_emitted_csv() {
+        // top_k is recorded-only provenance: the calibrator never reads
+        // selected_experts, so the CSV must not depend on it.
+        let a = TempDir::new().unwrap();
+        let b = TempDir::new().unwrap();
+        let one = run(
+            &recipe_json(6, "").replace("\"top_k\": 2", "\"top_k\": 1"),
+            a.path(),
+        )
+        .unwrap();
+        let many = run(
+            &recipe_json(6, "").replace("\"top_k\": 2", "\"top_k\": 8"),
+            b.path(),
+        )
+        .unwrap();
+        assert_eq!(one.latent_csv_sha256, many.latent_csv_sha256);
+    }
+
+    #[test]
+    fn run_manifest_pins_resolved_inputs_by_checksum() {
+        let out = TempDir::new().unwrap();
+        let report = run(&recipe_json(2, ""), out.path()).unwrap();
+        let manifest: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&report.run_manifest_path).unwrap())
+                .unwrap();
+        let digest = manifest["inputs"]["source_manifest"]["sha256"]
+            .as_str()
+            .expect("source_manifest must be pinned by sha256")
+            .to_string();
+        assert_eq!(
+            digest.len(),
+            64,
+            "expected a sha256 hex digest, got {digest}"
+        );
+        let expected = checksum::compute_file_sha256(example_manifest()).unwrap();
+        assert_eq!(digest, expected);
+    }
+
+    #[test]
     fn rejects_missing_output_dir() {
         let json = recipe_json(2, "");
         let error = SaaqRunConfig::from_json(
@@ -1510,6 +1761,85 @@ mod tests {
                 "unexpected error for '{bad}': {error}"
             );
         }
+    }
+
+    #[test]
+    fn rejects_non_increasing_csv_timestamps() {
+        for rows in [
+            // duplicate timestamp
+            "0,58.0,240.0,62.0,95.0\n0,59.2,246.0,62.9,100.0\n",
+            // backwards timestamp
+            "500,58.0,240.0,62.0,95.0\n250,59.2,246.0,62.9,100.0\n",
+        ] {
+            let out = TempDir::new().unwrap();
+            let telemetry_path = out.path().join("telemetry.csv");
+            std::fs::write(
+                &telemetry_path,
+                format!(
+                    "timestamp_ms,gpu_temp_c,gpu_power_w,cpu_tctl_c,cpu_package_power_w\n{rows}"
+                ),
+            )
+            .unwrap();
+
+            let error = config_from(&csv_recipe_json(&telemetry_path), out.path()).unwrap_err();
+            assert!(
+                error.contains("strictly increase"),
+                "unexpected error: {error}"
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_duplicate_csv_columns() {
+        let out = TempDir::new().unwrap();
+        let telemetry_path = out.path().join("telemetry.csv");
+        std::fs::write(
+            &telemetry_path,
+            "timestamp_ms,gpu_temp_c,gpu_temp_c,gpu_power_w,cpu_tctl_c,cpu_package_power_w\n\
+             0,58.0,99.0,240.0,62.0,95.0\n",
+        )
+        .unwrap();
+
+        let error = config_from(&csv_recipe_json(&telemetry_path), out.path()).unwrap_err();
+        assert!(
+            error.contains("more than once"),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[test]
+    fn csv_errors_report_the_real_file_line() {
+        let out = TempDir::new().unwrap();
+        let telemetry_path = out.path().join("telemetry.csv");
+        // A blank line between the header and the bad row: the bad value sits on
+        // file line 4 even though it is only the second data row.
+        std::fs::write(
+            &telemetry_path,
+            "timestamp_ms,gpu_temp_c,gpu_power_w,cpu_tctl_c,cpu_package_power_w\n\
+             0,58.0,240.0,62.0,95.0\n\
+             \n\
+             250,not_a_number,246.0,62.9,100.0\n",
+        )
+        .unwrap();
+
+        let error = config_from(&csv_recipe_json(&telemetry_path), out.path()).unwrap_err();
+        assert!(error.contains("line 4"), "unexpected error: {error}");
+    }
+
+    #[test]
+    fn refuses_to_replay_a_csv_into_its_own_output() {
+        let out = TempDir::new().unwrap();
+        // A previous run's latent CSV carries every telemetry input column, so
+        // it is a valid input; replaying it in place would truncate the source.
+        let first = run(&recipe_json(4, ""), out.path()).unwrap();
+        let error = SaaqRunConfig::from_json(
+            &csv_recipe_json(&first.latent_csv_path),
+            &repo_root().join("configs/recipes/unit-test.json"),
+            Some(out.path()),
+        )
+        .and_then(|config| execute(&config).map(|_| ()))
+        .unwrap_err();
+        assert!(error.contains("own output"), "unexpected error: {error}");
     }
 
     #[test]

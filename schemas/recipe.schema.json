@@ -122,13 +122,14 @@
           "type": "integer",
           "minimum": 2,
           "default": 8,
-          "description": "Number of experts the projector embedding is split across to derive the routing distribution behind the routing_entropy column."
+          "description": "PLACEHOLDER SURROGATE - not the model's real MoE router. Number of contiguous equal-width projector-embedding slices whose per-slice means are softmaxed to derive the routing distribution behind the routing_entropy column. Derived only from telemetry-driven SNN activity; no model weights are read. Capped at the projector embedding dim (2048) so every expert owns at least one position - beyond that, empty slices tie at 0.0 and inflate entropy. Note routing_entropy stays within ~1% of its uniform maximum over a typical run, so treat it as a recorded diagnostic rather than a live routing signal.",
+          "maximum": 2048
         },
         "top_k": {
           "type": "integer",
           "minimum": 1,
           "default": 1,
-          "description": "Experts recorded in selected_experts each tick; must not exceed num_experts."
+          "description": "Recorded-only provenance: experts listed in selected_experts each tick; must not exceed num_experts. The calibrator reads only expert_weights, so top_k cannot change latent_telemetry.csv - runs differing only in top_k are byte-identical. It documents the intended routing fan-out for the downstream handoff."
         },
         "telemetry": {
           "type": "object",

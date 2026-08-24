@@ -1,7 +1,7 @@
 {
   "recipe_id": "olmoe-saaq-example",
   "type": "saaq",
-  "description": "Deterministic CPU-only SAAQ validation pass over a synthetic telemetry ramp. Run with `magere run-saaq configs/recipes/saaq-example.json`; writes latent_telemetry.csv and run_manifest.json into outputs.output_dir (override with --output-dir).",
+  "description": "Deterministic CPU-only SAAQ validation pass over a synthetic telemetry ramp. Run with `magere run-saaq configs/recipes/saaq-example.json`; writes latent_telemetry.csv and run_manifest.json into outputs.output_dir (override with --output-dir). NOTE: expert_weights and the routing_entropy column are a PLACEHOLDER SURROGATE derived from SNN activity, not the source model's real MoE router - no model weights are read, and routing_entropy stays within ~1% of its uniform maximum over this run.",
   "inputs": {
     "source_manifest": "manifests/examples/olmoe-1b-7b-instruct.json",
     "goz1_ref": "manifests/examples/goz1-pack-example.json"

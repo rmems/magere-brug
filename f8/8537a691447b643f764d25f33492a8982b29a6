@@ -1,0 +1,26 @@
+crates/magere-cli/src/saaq.rs
+  s_ddc05feec482e2::t_9ccc82244e437b 260-261,268
+  s_ddc05feec482e2::t_4642042d8b79db 911-931
+  s_ddc05feec482e2::t_d82fae5c396762 1362-1379,1393,1414-1417,1424,1426-1429,1431-1441,1443-1449
+  s_ddc05feec482e2::t_5f7201ca6ddf0d 1-52,54-170,172-259,262-267,269-524,541-581,583-858,860-885,887-900,902-910,932-953,956-980,982-1066,1068-1351,1353-1354,1356-1361,1380-1392,1394-1413,1418-1423,1425,1430,1442,1450-1506
+  s_ddc05feec482e2::t_ef9b99c266dbbb 525-540
+  s_ddc05feec482e2::t_097cc324788253 171
+configs/recipes/saaq-example.json
+  s_ddc05feec482e2::t_279e538534f55e 1-40
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "f88537a691447b643f764d25f33492a8982b29a6",
+  "prompts": {},
+  "sessions": {
+    "s_ddc05feec482e2": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "bb500915-cbd1-43f7-8b94-3c88ff6ee554",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Raul Montoya Cardenas <montoyaraul34@gmail.com>"
+    }
+  }
+}

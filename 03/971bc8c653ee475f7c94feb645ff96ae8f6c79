@@ -1,0 +1,22 @@
+crates/magere-cli/src/saaq.rs
+  s_84ebba55a49cad::t_6c43b61ea232f1 2329-2365
+  s_84ebba55a49cad::t_f8d643e3f365ad 1160,1197,1265-1268
+crates/magere-cli/Cargo.toml
+  s_84ebba55a49cad::t_f8d643e3f365ad 14
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "03971bc8c653ee475f7c94feb645ff96ae8f6c79",
+  "prompts": {},
+  "sessions": {
+    "s_84ebba55a49cad": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0547a-2a35-7472-803b-c01cd77eb2b4",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "Raul Montoya Cardenas <montoyaraul34@gmail.com>"
+    }
+  }
+}

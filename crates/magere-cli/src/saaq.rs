@@ -198,6 +198,8 @@ pub struct ResolvedRef {
     pub reference: String,
     /// The existing file the reference resolved to.
     pub resolved_path: PathBuf,
+    /// SHA256 of the file at the same point validation resolved it.
+    pub sha256: String,
 }
 
 /// Where the runner gets its `TelemetrySnapshot` stream from.
@@ -686,13 +688,13 @@ const REPO_ROOT_MARKERS: [&str; 3] = ["Cargo.toml", ".git", "schemas"];
 ///
 /// The walk stops at the repo root deliberately: an unbounded walk to `/` let a
 /// reference like `etc/hostname` or `../../../etc/passwd` resolve to a real
-/// system file and be recorded as the run's provenance. For the same reason the
-/// CWD-relative interpretation is only tried *after* the recipe-anchored walk,
-/// so running a checked-in recipe by absolute path cannot silently pick up a
-/// same-named decoy sitting in the current directory.
+/// system file and be recorded as the run's provenance. Relative references
+/// containing `..` are rejected, and canonicalized candidates must stay under
+/// that root, so neither parent components nor symlinks can escape the tree.
 ///
-/// The resolved path is canonicalised before it is recorded, so the run
-/// manifest names the file that was actually read.
+/// The resolved path and its digest are captured together during validation, so
+/// the run manifest names and pins the file that was actually accepted even if
+/// the path changes before the CPU-heavy run finishes.
 fn resolve_input_ref(
     field: &str,
     reference: &str,
@@ -702,45 +704,92 @@ fn resolve_input_ref(
         return Err(format!("{field} must not be empty"));
     }
 
-    let resolved = |candidate: PathBuf| -> ResolvedRef {
-        ResolvedRef {
+    let resolved = |candidate: PathBuf| -> Result<ResolvedRef, String> {
+        let resolved_path = candidate.canonicalize().map_err(|e| {
+            format!(
+                "Failed to canonicalize {field} '{}' at '{}': {e}",
+                reference,
+                candidate.display()
+            )
+        })?;
+        let sha256 = checksum::compute_file_sha256(&resolved_path).map_err(|e| {
+            format!(
+                "Failed to checksum {field} '{}' at '{}': {e}",
+                reference,
+                resolved_path.display()
+            )
+        })?;
+        Ok(ResolvedRef {
             reference: reference.to_string(),
-            resolved_path: candidate.canonicalize().unwrap_or(candidate),
-        }
+            resolved_path,
+            sha256,
+        })
     };
 
     let direct = PathBuf::from(reference);
     if direct.is_absolute() {
         if direct.is_file() {
-            return Ok(resolved(direct));
+            return resolved(direct);
         }
         return Err(format!("{field} '{reference}' does not resolve to a file"));
     }
 
-    // Recipe-anchored walk first, bounded at the repo root.
-    let recipe_dir = recipe_path.parent().unwrap_or(Path::new("."));
-    for ancestor in recipe_dir.ancestors() {
-        let candidate = ancestor.join(reference);
-        if candidate.is_file() {
-            return Ok(resolved(candidate));
-        }
-        let is_root = REPO_ROOT_MARKERS
-            .iter()
-            .any(|marker| ancestor.join(marker).exists());
-        if is_root {
-            break;
-        }
+    if direct
+        .components()
+        .any(|component| matches!(component, std::path::Component::ParentDir))
+    {
+        return Err(format!(
+            "{field} '{reference}' must not contain '..' segments; relative recipe inputs are resolved within the repository that contains the recipe"
+        ));
     }
 
-    // Only then fall back to the process CWD.
-    if direct.is_file() {
-        return Ok(resolved(direct));
+    // A checked-in recipe searches only its containing repository. A marker-less
+    // tree is bounded to the recipe directory itself rather than walking to `/`.
+    let recipe_dir = recipe_path.parent().unwrap_or(Path::new("."));
+    let boundary = recipe_dir
+        .ancestors()
+        .find(|ancestor| {
+            REPO_ROOT_MARKERS
+                .iter()
+                .any(|marker| ancestor.join(marker).exists())
+        })
+        .unwrap_or(recipe_dir);
+    let canonical_boundary = boundary.canonicalize().map_err(|e| {
+        format!(
+            "Failed to canonicalize recipe reference boundary '{}': {e}",
+            boundary.display()
+        )
+    })?;
+
+    for ancestor in recipe_dir
+        .ancestors()
+        .take_while(|ancestor| *ancestor != boundary)
+        .chain(std::iter::once(boundary))
+    {
+        let candidate = ancestor.join(&direct);
+        if candidate.is_file() {
+            let canonical_candidate = candidate.canonicalize().map_err(|e| {
+                format!(
+                    "Failed to canonicalize {field} '{}' at '{}': {e}",
+                    reference,
+                    candidate.display()
+                )
+            })?;
+            if !canonical_candidate.starts_with(&canonical_boundary) {
+                return Err(format!(
+                    "{field} '{reference}' resolves outside the recipe's allowed tree '{}': '{}'",
+                    canonical_boundary.display(),
+                    canonical_candidate.display()
+                ));
+            }
+            return resolved(canonical_candidate);
+        }
     }
 
     Err(format!(
-        "{field} '{reference}' does not resolve to a file within the recipe's tree (looked \
-         relative to '{}' up to the repository root, then relative to the current directory)",
-        recipe_dir.display()
+        "{field} '{reference}' does not resolve to a file within the recipe's tree (looked relative to '{}' up to '{}')",
+        recipe_dir.display(),
+        canonical_boundary.display()
     ))
 }
 
@@ -1037,26 +1086,40 @@ pub fn execute(config: &SaaqRunConfig) -> Result<SaaqRunReport, String> {
     let run_manifest_path = config.output_dir.join(RUN_MANIFEST_FILE);
 
     // The emitted latent CSV carries every telemetry input column (plus the
-    // derived ones the reader ignores), so a previous run's output is itself a
-    // valid `source: "csv"` input. Replaying one in place would read it into
-    // memory and then truncate it here, destroying the source and leaving a run
-    // manifest whose recorded input path now names the output. Refuse instead.
+    // derived ones the reader ignores), and any numeric CSV can be named
+    // `run_manifest.json`. Replaying either output path in place would destroy
+    // the source and leave provenance pointing at newly written output bytes.
     if let TelemetrySource::Csv { path, .. } = &config.telemetry {
-        let same = match (path.canonicalize(), latent_csv_path.canonicalize()) {
-            (Ok(input), Ok(output)) => input == output,
-            // The output does not exist yet on a first run, so fall back to
-            // comparing the input against the canonicalised output directory.
-            _ => match (path.canonicalize(), config.output_dir.canonicalize()) {
-                (Ok(input), Ok(dir)) => input == dir.join(LATENT_CSV_FILE),
-                _ => false,
-            },
-        };
-        if same {
+        let input = path.canonicalize().map_err(|e| {
+            format!(
+                "Failed to canonicalize saaq.telemetry.path '{}': {e}",
+                path.display()
+            )
+        })?;
+        let output_dir = config.output_dir.canonicalize().map_err(|e| {
+            format!(
+                "Failed to canonicalize output directory '{}': {e}",
+                config.output_dir.display()
+            )
+        })?;
+        let collision = [&latent_csv_path, &run_manifest_path]
+            .into_iter()
+            .find_map(|output| {
+                let canonical_output = output.canonicalize().unwrap_or_else(|_| {
+                    output_dir.join(
+                        output
+                            .file_name()
+                            .expect("run output paths always have a file name"),
+                    )
+                });
+                (input == canonical_output).then_some(canonical_output)
+            });
+        if let Some(output) = collision {
             return Err(format!(
                 "saaq.telemetry.path '{}' resolves to this run's own output '{}'; \
                  pick a different --output-dir so the replay does not overwrite its source",
                 path.display(),
-                latent_csv_path.display()
+                output.display()
             ));
         }
     }
@@ -1150,10 +1213,9 @@ fn build_run_manifest(
             Some(resolved) => serde_json::json!({
                 "ref": resolved.reference,
                 "resolved_path": resolved.resolved_path.display().to_string(),
-                // A path is a mutable reference; without the digest the manifest
-                // cannot say which bytes stood behind this run's provenance.
-                "sha256": checksum::compute_file_sha256(&resolved.resolved_path)
-                    .unwrap_or_else(|_| "unavailable".into()),
+                // The path is mutable, so use the digest retained when
+                // validation accepted it rather than re-reading later bytes.
+                "sha256": resolved.sha256,
             }),
             None => serde_json::Value::Null,
         }
@@ -1649,6 +1711,45 @@ mod tests {
     }
 
     #[test]
+    fn input_refs_reject_parent_directory_segments() {
+        let out = TempDir::new().unwrap();
+        let json = recipe_json(2, "").replace(
+            example_manifest().display().to_string().as_str(),
+            "../../../../etc/hostname",
+        );
+        let error = config_from(&json, out.path()).unwrap_err();
+        assert!(
+            error.contains("must not contain '..'"),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn input_refs_reject_symlinks_that_escape_the_repository_tree() {
+        use std::os::unix::fs::symlink;
+
+        let tree = TempDir::new().unwrap();
+        std::fs::write(tree.path().join("Cargo.toml"), "[workspace]\n").unwrap();
+        let outside = TempDir::new().unwrap();
+        let outside_manifest = outside.path().join("outside.json");
+        std::fs::write(&outside_manifest, "outside").unwrap();
+        symlink(&outside_manifest, tree.path().join("escape.json")).unwrap();
+
+        let json = recipe_json(2, "").replace(
+            example_manifest().display().to_string().as_str(),
+            "escape.json",
+        );
+        let error =
+            SaaqRunConfig::from_json(&json, &tree.path().join("recipe.json"), Some(tree.path()))
+                .unwrap_err();
+        assert!(
+            error.contains("outside the recipe's allowed tree"),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[test]
     fn top_k_cannot_change_the_emitted_csv() {
         // top_k is recorded-only provenance: the calibrator never reads
         // selected_experts, so the CSV must not depend on it.
@@ -1685,6 +1786,35 @@ mod tests {
         );
         let expected = checksum::compute_file_sha256(example_manifest()).unwrap();
         assert_eq!(digest, expected);
+    }
+
+    #[test]
+    fn run_manifest_retains_the_provenance_digest_from_validation() {
+        let input = TempDir::new().unwrap();
+        let source_manifest = input.path().join("source.json");
+        let validated_bytes = "{\"version\":1}\n";
+        std::fs::write(&source_manifest, validated_bytes).unwrap();
+
+        let out = TempDir::new().unwrap();
+        let json = recipe_json(2, "").replace(
+            example_manifest().display().to_string().as_str(),
+            &source_manifest.display().to_string(),
+        );
+        let config = config_from(&json, out.path()).unwrap();
+        let validated_sha256 = checksum::compute_string_sha256(validated_bytes);
+
+        // Provenance inputs are references, not execution inputs. If one
+        // changes during the CPU-heavy run, the manifest must still describe
+        // the bytes that validation accepted.
+        std::fs::write(&source_manifest, "{\"version\":2}\n").unwrap();
+        let report = execute(&config).unwrap();
+        let manifest: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&report.run_manifest_path).unwrap())
+                .unwrap();
+        assert_eq!(
+            manifest["inputs"]["source_manifest"]["sha256"],
+            validated_sha256
+        );
     }
 
     #[test]
@@ -1920,6 +2050,25 @@ mod tests {
         .and_then(|config| execute(&config).map(|_| ()))
         .unwrap_err();
         assert!(error.contains("own output"), "unexpected error: {error}");
+    }
+
+    #[test]
+    fn refuses_to_replace_csv_input_named_like_the_run_manifest() {
+        let out = TempDir::new().unwrap();
+        let telemetry_path = out.path().join(RUN_MANIFEST_FILE);
+        let telemetry = "timestamp_ms,gpu_temp_c,gpu_power_w,cpu_tctl_c,cpu_package_power_w\n\
+             0,58.0,240.0,62.0,95.0\n";
+        std::fs::write(&telemetry_path, telemetry).unwrap();
+
+        let error = config_from(&csv_recipe_json(&telemetry_path), out.path())
+            .and_then(|config| execute(&config).map(|_| ()))
+            .unwrap_err();
+        assert!(error.contains("own output"), "unexpected error: {error}");
+        assert_eq!(
+            std::fs::read_to_string(&telemetry_path).unwrap(),
+            telemetry,
+            "collision detection must run before the source is overwritten"
+        );
     }
 
     #[test]

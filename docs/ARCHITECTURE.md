@@ -366,7 +366,7 @@ SnnLatentSnapshot per tick
 
 `telemetry.source: "synthetic"` takes `ticks`, `tick_interval_ms`, `start_timestamp_ms`, and `start` / `delta` channel blocks. `telemetry.source: "csv"` takes `path` instead, and rejects the synthetic-only knobs rather than silently ignoring them. The CSV must carry `timestamp_ms`, `gpu_temp_c`, `gpu_power_w`, `cpu_tctl_c` and `cpu_package_power_w` columns, in any order.
 
-Input refs (`inputs.source_manifest`, `inputs.goz1_ref`) must resolve to a file on disk. A reference is tried as written (absolute, or relative to the current directory) and then against the recipe's own directory and each of its parents, so a repo-root-relative reference in a nested recipe works from any working directory.
+Input refs (`inputs.source_manifest`, `inputs.goz1_ref`) must resolve to a file on disk. Absolute references are taken as written. Relative references are anchored to the recipe's directory and searched through its ancestors only as far as that recipe's repository root; `..` segments and symlinks that escape the tree are rejected. This lets repo-root-relative references in nested recipes work from any working directory without making resolution depend on the caller's current directory.
 
 ### Outputs
 

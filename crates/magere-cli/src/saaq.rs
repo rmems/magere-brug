@@ -872,24 +872,22 @@ fn read_telemetry_csv(path: &Path) -> Result<(Vec<TelemetrySnapshot>, String), S
     let sha256 = checksum::compute_string_sha256(&contents);
     let parsed_contents = contents.strip_prefix('\u{feff}').unwrap_or(&contents);
 
-    // Line numbers are captured before blank lines are filtered so an error
-    // points at the line the reader would find in an editor, not at an index
-    // into the surviving data rows.
-    let mut lines = parsed_contents
-        .lines()
-        .enumerate()
-        .map(|(index, line)| (index + 1, line.trim()))
-        .filter(|(_, line)| !line.is_empty());
-
-    let (_, header) = lines
-        .next()
-        .ok_or_else(|| format!("Telemetry CSV '{}' is empty", path.display()))?;
-    let columns: Vec<&str> = header.split(',').map(str::trim).collect();
+    let mut reader = csv::ReaderBuilder::new()
+        .trim(csv::Trim::All)
+        .flexible(true)
+        .from_reader(parsed_contents.as_bytes());
+    let columns = reader
+        .headers()
+        .map_err(|e| format!("Failed to parse telemetry CSV '{}': {e}", path.display()))?
+        .clone();
+    if columns.is_empty() {
+        return Err(format!("Telemetry CSV '{}' is empty", path.display()));
+    }
 
     // A duplicated required column would otherwise silently bind to whichever
     // copy came first, making the run depend on column order.
     for name in TELEMETRY_CSV_COLUMNS {
-        if columns.iter().filter(|column| **column == name).count() > 1 {
+        if columns.iter().filter(|column| *column == name).count() > 1 {
             return Err(format!(
                 "Telemetry CSV '{}' declares column '{}' more than once",
                 path.display(),
@@ -902,7 +900,7 @@ fn read_telemetry_csv(path: &Path) -> Result<(Vec<TelemetrySnapshot>, String), S
     for (slot, name) in indices.iter_mut().zip(TELEMETRY_CSV_COLUMNS) {
         *slot = columns
             .iter()
-            .position(|column| *column == name)
+            .position(|column| column == name)
             .ok_or_else(|| {
                 format!(
                     "Telemetry CSV '{}' is missing required column '{}' (needs: {})",
@@ -914,10 +912,41 @@ fn read_telemetry_csv(path: &Path) -> Result<(Vec<TelemetrySnapshot>, String), S
     }
 
     let mut snapshots = Vec::new();
-    for (line_no, line) in lines {
-        let fields: Vec<&str> = line.split(',').map(str::trim).collect();
+    for result in reader.records() {
+        let fields = result
+            .map_err(|e| format!("Failed to parse telemetry CSV '{}': {e}", path.display()))?;
+        // The CSV reader deliberately skips blank records, and its logical
+        // line counter does not include those gaps. Derive the editor-visible
+        // physical line from the record's byte offset so diagnostics retain
+        // the original source location (also for multiline quoted fields).
+        let line_no = fields.position().map_or(0, |position| {
+            let bytes = parsed_contents.as_bytes();
+            let mut record_byte = (position.byte() as usize).min(bytes.len());
+            // A record position can point before blank records that the CSV
+            // parser skipped. Advance over only whitespace-only physical lines
+            // before counting, without disturbing blanks inside quoted fields.
+            while record_byte < bytes.len() {
+                let line_end = bytes[record_byte..]
+                    .iter()
+                    .position(|byte| *byte == b'\n')
+                    .map_or(bytes.len(), |offset| record_byte + offset);
+                if bytes[record_byte..line_end]
+                    .iter()
+                    .all(u8::is_ascii_whitespace)
+                {
+                    record_byte = (line_end + 1).min(bytes.len());
+                } else {
+                    break;
+                }
+            }
+            bytes[..record_byte]
+                .iter()
+                .filter(|byte| **byte == b'\n')
+                .count()
+                + 1
+        });
         let field = |index: usize, name: &str| -> Result<&str, String> {
-            fields.get(index).copied().ok_or_else(|| {
+            fields.get(index).ok_or_else(|| {
                 format!(
                     "Telemetry CSV '{}' line {} has no value for column '{}'",
                     path.display(),
@@ -2044,6 +2073,27 @@ mod tests {
         assert!(rows[0].starts_with("0,"));
         assert!(rows[1].starts_with("250,"));
         assert!(rows[2].starts_with("500,"));
+    }
+
+    #[test]
+    fn csv_telemetry_accepts_quoted_fields_and_commas_in_extra_columns() {
+        let out = TempDir::new().unwrap();
+        let telemetry_path = out.path().join("telemetry.csv");
+        std::fs::write(
+            &telemetry_path,
+            "\"timestamp_ms\",note,gpu_temp_c,gpu_power_w,cpu_tctl_c,cpu_package_power_w\n\
+             \"0\",\"ambient, stable\",\"58.0\",240.0,62.0,95.0\n\
+             \"250\",\"load, rising\",\"59.2\",246.0,62.9,100.0\n",
+        )
+        .unwrap();
+
+        let report = run(&csv_recipe_json(&telemetry_path), out.path()).unwrap();
+        assert_eq!(report.ticks, 2);
+        let contents = std::fs::read_to_string(report.latent_csv_path).unwrap();
+        let rows: Vec<&str> = contents.lines().skip(1).collect();
+        assert_eq!(rows.len(), 2);
+        assert!(rows[0].starts_with("0,"));
+        assert!(rows[1].starts_with("250,"));
     }
 
     #[test]

@@ -329,7 +329,10 @@ impl SaaqRunConfig {
             .canonicalize()
             .unwrap_or_else(|_| recipe_path.to_path_buf());
         let recipe_path = retained_recipe_path.as_path();
-        let raw: RawRecipe = serde_json::from_str(contents)
+        let value: serde_json::Value = serde_json::from_str(contents)
+            .map_err(|e| format!("Failed to parse recipe '{}': {}", recipe_path.display(), e))?;
+        reject_explicit_nulls(&value, "")?;
+        let raw: RawRecipe = serde_json::from_value(value)
             .map_err(|e| format!("Failed to parse recipe '{}': {}", recipe_path.display(), e))?;
 
         let recipe_id = match raw.recipe_id.as_deref() {
@@ -482,6 +485,39 @@ impl SaaqRunConfig {
             top_k,
             telemetry,
         })
+    }
+}
+
+/// Reject explicit JSON nulls before Serde maps them onto `Option::None`.
+///
+/// Every nullable-looking recipe field is optional in the schema but has a
+/// non-null type when present. Treating `null` as absence would silently apply
+/// defaults to malformed experiment parameters, so enforce that distinction
+/// across the complete recipe tree before typed deserialization.
+fn reject_explicit_nulls(value: &serde_json::Value, path: &str) -> Result<(), String> {
+    match value {
+        serde_json::Value::Null => {
+            let field = if path.is_empty() { "recipe" } else { path };
+            Err(format!("{field} must not be null"))
+        }
+        serde_json::Value::Array(values) => {
+            for (index, value) in values.iter().enumerate() {
+                reject_explicit_nulls(value, &format!("{path}[{index}]"))?;
+            }
+            Ok(())
+        }
+        serde_json::Value::Object(fields) => {
+            for (name, value) in fields {
+                let field = if path.is_empty() {
+                    name.clone()
+                } else {
+                    format!("{path}.{name}")
+                };
+                reject_explicit_nulls(value, &field)?;
+            }
+            Ok(())
+        }
+        _ => Ok(()),
     }
 }
 
@@ -680,16 +716,29 @@ fn channels_are_finite(channels: &Channels) -> bool {
         && channels.cpu_package_power_w.is_finite()
 }
 
-/// Files that mark the root of the tree a recipe is allowed to reference.
-const REPO_ROOT_MARKERS: [&str; 3] = ["Cargo.toml", ".git", "schemas"];
+/// Whether a directory is the repository/workspace boundary for recipe refs.
+///
+/// A package-level `Cargo.toml` is deliberately insufficient: recipes nested
+/// beneath a workspace crate must still be able to resolve repository-relative
+/// paths. A Git administrative entry, the repository's schema directory, or a
+/// Cargo manifest that actually declares `[workspace]` identifies the root.
+fn is_recipe_tree_root(directory: &Path) -> bool {
+    if directory.join(".git").exists() || directory.join("schemas").is_dir() {
+        return true;
+    }
+
+    std::fs::read_to_string(directory.join("Cargo.toml"))
+        .is_ok_and(|contents| contents.lines().any(|line| line.trim() == "[workspace]"))
+}
 
 /// Resolve a recipe input reference to an existing file.
 ///
 /// Recipes are checked in with repo-root-relative references
 /// (`manifests/examples/...`) but are themselves nested (`configs/recipes/...`),
 /// so the reference is tried against the recipe's own directory and then each
-/// ancestor **up to and including the first one that looks like a repo root**
-/// (see [`REPO_ROOT_MARKERS`]). An absolute reference is taken as written.
+/// ancestor **up to and including the first one that is a Git or Cargo
+/// workspace root** (see [`is_recipe_tree_root`]). An absolute reference is
+/// taken as written.
 ///
 /// The walk stops at the repo root deliberately: an unbounded walk to `/` let a
 /// reference like `etc/hostname` or `../../../etc/passwd` resolve to a real
@@ -753,11 +802,7 @@ fn resolve_input_ref(
     let recipe_dir = recipe_path.parent().unwrap_or(Path::new("."));
     let boundary = recipe_dir
         .ancestors()
-        .find(|ancestor| {
-            REPO_ROOT_MARKERS
-                .iter()
-                .any(|marker| ancestor.join(marker).exists())
-        })
+        .find(|ancestor| is_recipe_tree_root(ancestor))
         .unwrap_or(recipe_dir);
     let canonical_boundary = boundary.canonicalize().map_err(|e| {
         format!(
@@ -1112,6 +1157,28 @@ pub fn execute(config: &SaaqRunConfig) -> Result<SaaqRunReport, String> {
             )
         })
     });
+    if output_targets[0] == output_targets[1] {
+        return Err(format!(
+            "run outputs '{}' and '{}' alias the same filesystem target '{}'; remove the \
+             alias or choose a different --output-dir",
+            latent_csv_path.display(),
+            run_manifest_path.display(),
+            output_targets[0].display()
+        ));
+    }
+
+    // A dangling output symlink cannot be canonicalized above, but following
+    // it during create/write could still alias the other output or escape the
+    // selected directory. Final artifact paths must be real directory entries.
+    for output in [&latent_csv_path, &run_manifest_path] {
+        if std::fs::symlink_metadata(output).is_ok_and(|metadata| metadata.file_type().is_symlink())
+        {
+            return Err(format!(
+                "run output '{}' is a symbolic-link alias; remove it before running",
+                output.display()
+            ));
+        }
+    }
 
     let mut inputs = vec![("recipe", config.recipe_path.as_path())];
     if let Some(reference) = &config.source_manifest {
@@ -1582,6 +1649,26 @@ mod tests {
     }
 
     #[test]
+    fn rejects_explicit_nulls_in_defaultable_recipe_fields() {
+        for (pointer, field) in [
+            ("/saaq/snn_steps", "saaq.snn_steps"),
+            ("/saaq/projection_mode", "saaq.projection_mode"),
+            ("/saaq/telemetry/source", "saaq.telemetry.source"),
+        ] {
+            let out = TempDir::new().unwrap();
+            let mut value: serde_json::Value = serde_json::from_str(&recipe_json(2, "")).unwrap();
+            *value.pointer_mut(pointer).expect("test pointer must exist") = serde_json::Value::Null;
+
+            let error = config_from(&value.to_string(), out.path()).unwrap_err();
+            assert!(error.contains(field), "unexpected error: {error}");
+            assert!(
+                error.contains("must not be null"),
+                "unexpected error: {error}"
+            );
+        }
+    }
+
+    #[test]
     fn rejects_input_ref_that_does_not_resolve() {
         let out = TempDir::new().unwrap();
         let json = recipe_json(2, "").replace(
@@ -1785,6 +1872,22 @@ mod tests {
         assert!(
             error.contains("outside the recipe's allowed tree"),
             "unexpected error: {error}"
+        );
+    }
+
+    #[test]
+    fn nested_crate_recipes_resolve_refs_from_the_workspace_root() {
+        let out = TempDir::new().unwrap();
+        let json = recipe_json(2, "").replace(
+            &json_path(&example_manifest()),
+            "manifests/examples/olmoe-1b-7b-instruct.json",
+        );
+        let nested_recipe = repo_root().join("crates/magere-cli/configs/nested-recipe.json");
+
+        let config = SaaqRunConfig::from_json(&json, &nested_recipe, Some(out.path())).unwrap();
+        assert_eq!(
+            config.source_manifest.unwrap().resolved_path,
+            example_manifest().canonicalize().unwrap()
         );
     }
 
@@ -2192,6 +2295,28 @@ mod tests {
                 "collision detection must run before {field} is overwritten"
             );
         }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn refuses_output_paths_that_alias_each_other_through_a_symlink() {
+        use std::os::unix::fs::symlink;
+
+        let out = TempDir::new().unwrap();
+        let latent_path = out.path().join(LATENT_CSV_FILE);
+        let manifest_path = out.path().join(RUN_MANIFEST_FILE);
+        std::fs::write(&latent_path, "previous latent bytes\n").unwrap();
+        symlink(LATENT_CSV_FILE, &manifest_path).unwrap();
+
+        let error = config_from(&recipe_json(2, ""), out.path())
+            .and_then(|config| execute(&config).map(|_| ()))
+            .unwrap_err();
+        assert!(error.contains("alias"), "unexpected error: {error}");
+        assert_eq!(
+            std::fs::read_to_string(&latent_path).unwrap(),
+            "previous latent bytes\n",
+            "alias detection must run before either output is overwritten"
+        );
     }
 
     #[test]

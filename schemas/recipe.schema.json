@@ -122,7 +122,7 @@
           "type": "integer",
           "minimum": 2,
           "default": 8,
-          "description": "PLACEHOLDER SURROGATE - not the model's real MoE router. Number of contiguous equal-width projector-embedding slices whose per-slice means are softmaxed to derive the routing distribution behind the routing_entropy column. Derived only from telemetry-driven SNN activity; no model weights are read. Capped at the projector embedding dim (2048) so every expert owns at least one position - beyond that, empty slices tie at 0.0 and inflate entropy. Note routing_entropy stays within ~1% of its uniform maximum over a typical run, so treat it as a recorded diagnostic rather than a live routing signal.",
+          "description": "PLACEHOLDER SURROGATE - not the model's real MoE router. Number of contiguous proportional projector-embedding slices whose per-slice means are softmaxed to derive the routing distribution behind the routing_entropy column. The proportional boundaries partition every embedding position and slice widths differ by at most one. Derived only from telemetry-driven SNN activity; no model weights are read. Capped at the projector embedding dim (2048) so every expert owns at least one position. Note routing_entropy stays within ~1% of its uniform maximum over a typical run, so treat it as a recorded diagnostic rather than a live routing signal.",
           "maximum": 2048
         },
         "top_k": {

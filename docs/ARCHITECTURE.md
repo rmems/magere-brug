@@ -351,8 +351,9 @@ SnnLatentSnapshot per tick
 > **The expert weights are a placeholder, and `routing_entropy` is near-constant.**
 > `expert_weights` is *not* the source model's MoE router. It is a surrogate derived
 > entirely from telemetry-driven SNN activity — no model weights are read — by softmaxing
-> the per-slice means of `num_experts` contiguous equal-width slices of the projector
-> embedding. A run manifest that also names a real MoE `source_manifest` and a GOZ1 ref
+> the per-slice means of `num_experts` contiguous proportional slices that partition
+> every projector-embedding position (slice widths differ by at most one). A run manifest
+> that also names a real MoE `source_manifest` and a GOZ1 ref
 > would otherwise read as if the column came from the model itself.
 >
 > Its dynamic range is correspondingly narrow. Over the checked-in

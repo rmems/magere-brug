@@ -82,10 +82,11 @@ const RUN_MANIFEST_SCHEMA: &str = "magere-brug/saaq-run/1";
 /// manifest and a GOZ1 ref would otherwise read as if `routing_entropy` came
 /// from the model's own router.
 const EXPERT_WEIGHT_SCHEME: &str = "PLACEHOLDER SURROGATE - not the model's real MoE router. \
-     Softmax over the per-slice means of num_experts contiguous equal-width slices of the \
-     projector embedding. Derived only from telemetry-driven SNN activity; no model weights \
-     are read. Over a typical run its entropy stays within ~1% of the uniform maximum, so \
-     routing_entropy is near-constant and must not be treated as a live routing signal.";
+     Softmax over the per-slice means of num_experts contiguous proportional slices that \
+     partition every projector-embedding position; slice widths differ by at most one. Derived \
+     only from telemetry-driven SNN activity; no model weights are read. Over a typical run its \
+     entropy stays within ~1% of the uniform maximum, so routing_entropy is near-constant and \
+     must not be treated as a live routing signal.";
 
 /// Accepted `outputs.generated_format` values, mirroring the enum in
 /// `schemas/recipe.schema.json`.
@@ -321,6 +322,13 @@ impl SaaqRunConfig {
         recipe_path: &Path,
         output_dir_override: Option<&Path>,
     ) -> Result<Self, String> {
+        // Retain the validation-time identity when the recipe exists. Execution
+        // can then detect output collisions without requiring the mutable path
+        // to remain present after the JSON has already been parsed.
+        let retained_recipe_path = recipe_path
+            .canonicalize()
+            .unwrap_or_else(|_| recipe_path.to_path_buf());
+        let recipe_path = retained_recipe_path.as_path();
         let raw: RawRecipe = serde_json::from_str(contents)
             .map_err(|e| format!("Failed to parse recipe '{}': {}", recipe_path.display(), e))?;
 
@@ -418,12 +426,9 @@ impl SaaqRunConfig {
                 ));
             }
             Some(value) => {
-                // Slices are `ceil(EMBEDDING_DIM / num_experts)` wide, so beyond
-                // one position per expert the trailing experts get empty slices
-                // that score exactly 0.0, tie in the softmax, and drag entropy
-                // toward its uniform maximum — inflating `routing_entropy`
-                // without adding signal. Capping here also bounds the
-                // allocation the value drives.
+                // Proportional boundaries give every expert at least one
+                // embedding position only while num_experts <= EMBEDDING_DIM.
+                // Capping here also bounds the allocation the value drives.
                 return Err(format!(
                     "saaq.num_experts must be <= the projector embedding dim ({}) so every \
                      expert owns at least one embedding position; got {value}",
@@ -955,10 +960,11 @@ fn read_telemetry_csv(path: &Path) -> Result<(Vec<TelemetrySnapshot>, String), S
 
 /// Derive expert weights from a projector embedding.
 ///
-/// The embedding is cut into `num_experts` contiguous, equal-width slices
-/// (`chunk = ceil(len / num_experts)`, trailing experts get whatever is left,
-/// possibly nothing). Each expert scores the mean of its slice, and the scores
-/// become a distribution via a max-subtracted softmax.
+/// The embedding is cut into `num_experts` contiguous proportional slices,
+/// with expert `i` receiving `[i * len / n, (i + 1) * len / n)`. This
+/// partitions every position exactly once, and when `n <= len` every expert
+/// receives at least one position. Each expert scores the mean of its slice,
+/// and the scores become a distribution via a max-subtracted softmax.
 ///
 /// This is a stand-in for a real MoE router: `magere-corinth-core`'s SAAQ
 /// calibrator only needs a routing *distribution* to compute
@@ -966,11 +972,13 @@ fn read_telemetry_csv(path: &Path) -> Result<(Vec<TelemetrySnapshot>, String), S
 /// function is pure — same embedding in, same weights out — which is what keeps
 /// `latent_telemetry.csv` reproducible.
 fn expert_weights_from_embedding(embedding: &[f32], num_experts: usize) -> Vec<f32> {
-    let chunk = embedding.len().div_ceil(num_experts.max(1)).max(1);
+    if num_experts == 0 {
+        return Vec::new();
+    }
     let scores: Vec<f32> = (0..num_experts)
         .map(|expert| {
-            let start = (expert * chunk).min(embedding.len());
-            let end = (start + chunk).min(embedding.len());
+            let start = expert * embedding.len() / num_experts;
+            let end = (expert + 1) * embedding.len() / num_experts;
             let slice = &embedding[start..end];
             if slice.is_empty() {
                 0.0
@@ -1086,43 +1094,48 @@ pub fn execute(config: &SaaqRunConfig) -> Result<SaaqRunReport, String> {
     let latent_csv_path = config.output_dir.join(LATENT_CSV_FILE);
     let run_manifest_path = config.output_dir.join(RUN_MANIFEST_FILE);
 
-    // The emitted latent CSV carries every telemetry input column (plus the
-    // derived ones the reader ignores), and any numeric CSV can be named
-    // `run_manifest.json`. Replaying either output path in place would destroy
-    // the source and leave provenance pointing at newly written output bytes.
+    // Every accepted path is retained in canonical form during validation.
+    // Compare those identities directly: re-canonicalizing here would both
+    // reopen a TOCTOU window and require a parsed input to remain on disk.
+    let output_dir = config.output_dir.canonicalize().map_err(|e| {
+        format!(
+            "Failed to canonicalize output directory '{}': {e}",
+            config.output_dir.display()
+        )
+    })?;
+    let output_targets = [&latent_csv_path, &run_manifest_path].map(|output| {
+        output.canonicalize().unwrap_or_else(|_| {
+            output_dir.join(
+                output
+                    .file_name()
+                    .expect("run output paths always have a file name"),
+            )
+        })
+    });
+
+    let mut inputs = vec![("recipe", config.recipe_path.as_path())];
+    if let Some(reference) = &config.source_manifest {
+        inputs.push(("inputs.source_manifest", reference.resolved_path.as_path()));
+    }
+    if let Some(reference) = &config.goz1_ref {
+        inputs.push(("inputs.goz1_ref", reference.resolved_path.as_path()));
+    }
     if let TelemetrySource::Csv { path, .. } = &config.telemetry {
-        let input = path.canonicalize().map_err(|e| {
-            format!(
-                "Failed to canonicalize saaq.telemetry.path '{}': {e}",
-                path.display()
-            )
-        })?;
-        let output_dir = config.output_dir.canonicalize().map_err(|e| {
-            format!(
-                "Failed to canonicalize output directory '{}': {e}",
-                config.output_dir.display()
-            )
-        })?;
-        let collision = [&latent_csv_path, &run_manifest_path]
-            .into_iter()
-            .find_map(|output| {
-                let canonical_output = output.canonicalize().unwrap_or_else(|_| {
-                    output_dir.join(
-                        output
-                            .file_name()
-                            .expect("run output paths always have a file name"),
-                    )
-                });
-                (input == canonical_output).then_some(canonical_output)
-            });
-        if let Some(output) = collision {
-            return Err(format!(
-                "saaq.telemetry.path '{}' resolves to this run's own output '{}'; \
-                 pick a different --output-dir so the replay does not overwrite its source",
-                path.display(),
-                output.display()
-            ));
-        }
+        inputs.push(("saaq.telemetry.path", path.as_path()));
+    }
+
+    if let Some((field, input, output)) = inputs.iter().find_map(|(field, input)| {
+        output_targets
+            .iter()
+            .find(|output| *input == output.as_path())
+            .map(|output| (*field, *input, output))
+    }) {
+        return Err(format!(
+            "{field} '{}' resolves to this run's own output '{}'; pick a different \
+             --output-dir so the run does not overwrite its input",
+            input.display(),
+            output.display()
+        ));
     }
 
     let mut funnel = TelemetryFunnel::new(config.thresholds, config.snn_steps);
@@ -1483,6 +1496,21 @@ mod tests {
             "weights must sum to 1, got {total}"
         );
         assert!(first.iter().all(|weight| *weight > 0.0));
+    }
+
+    #[test]
+    fn expert_partition_gives_every_expert_a_non_empty_proportional_slice() {
+        let embedding = vec![1.0; magere_corinth_core::EMBEDDING_DIM];
+        let weights = expert_weights_from_embedding(&embedding, 1500);
+
+        assert_eq!(weights.len(), 1500);
+        let expected = 1.0 / 1500.0;
+        assert!(
+            weights
+                .iter()
+                .all(|weight| (*weight - expected).abs() < 1e-7),
+            "a uniform embedding must give every non-empty slice the same weight"
+        );
     }
 
     #[test]
@@ -1960,6 +1988,29 @@ mod tests {
     }
 
     #[test]
+    fn csv_execution_uses_retained_rows_after_the_validated_file_is_removed() {
+        let out = TempDir::new().unwrap();
+        let telemetry_path = out.path().join("telemetry.csv");
+        std::fs::write(
+            &telemetry_path,
+            "timestamp_ms,gpu_temp_c,gpu_power_w,cpu_tctl_c,cpu_package_power_w\n\
+             0,58.0,240.0,62.0,95.0\n\
+             250,59.2,246.0,62.9,100.0\n",
+        )
+        .unwrap();
+
+        let config = config_from(&csv_recipe_json(&telemetry_path), out.path()).unwrap();
+        std::fs::remove_file(&telemetry_path).unwrap();
+
+        let report = execute(&config).unwrap();
+        assert_eq!(report.ticks, 2);
+        let manifest: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(report.run_manifest_path).unwrap())
+                .unwrap();
+        assert_eq!(manifest["telemetry"]["ticks"], 2);
+    }
+
+    #[test]
     fn rejects_csv_telemetry_missing_a_required_column() {
         let out = TempDir::new().unwrap();
         let telemetry_path = out.path().join("telemetry.csv");
@@ -2099,6 +2150,48 @@ mod tests {
             telemetry,
             "collision detection must run before the source is overwritten"
         );
+    }
+
+    #[test]
+    fn refuses_to_replace_recipe_named_like_the_run_manifest() {
+        let out = TempDir::new().unwrap();
+        let recipe_path = out.path().join(RUN_MANIFEST_FILE);
+        let recipe = recipe_json(2, "");
+        std::fs::write(&recipe_path, &recipe).unwrap();
+
+        let error = SaaqRunConfig::load(&recipe_path, Some(out.path()))
+            .and_then(|config| execute(&config).map(|_| ()))
+            .unwrap_err();
+        assert!(error.contains("own output"), "unexpected error: {error}");
+        assert_eq!(
+            std::fs::read_to_string(&recipe_path).unwrap(),
+            recipe,
+            "collision detection must run before the recipe is overwritten"
+        );
+    }
+
+    #[test]
+    fn refuses_to_replace_provenance_inputs_named_like_the_run_manifest() {
+        for field in ["source_manifest", "goz1_ref"] {
+            let out = TempDir::new().unwrap();
+            let input_path = out.path().join(RUN_MANIFEST_FILE);
+            let input = format!("provenance for {field}\n");
+            std::fs::write(&input_path, &input).unwrap();
+
+            let json = recipe_json(2, "")
+                .replace("source_manifest", field)
+                .replace(&json_path(&example_manifest()), &json_path(&input_path));
+            let error = config_from(&json, out.path())
+                .and_then(|config| execute(&config).map(|_| ()))
+                .unwrap_err();
+            assert!(error.contains("own output"), "unexpected error: {error}");
+            assert!(error.contains(field), "unexpected error: {error}");
+            assert_eq!(
+                std::fs::read_to_string(&input_path).unwrap(),
+                input,
+                "collision detection must run before {field} is overwritten"
+            );
+        }
     }
 
     #[test]

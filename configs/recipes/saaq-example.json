@@ -1,0 +1,40 @@
+{
+  "recipe_id": "olmoe-saaq-example",
+  "type": "saaq",
+  "description": "Deterministic CPU-only SAAQ validation pass over a synthetic telemetry ramp. Run with `magere run-saaq configs/recipes/saaq-example.json`; writes latent_telemetry.csv and run_manifest.json into outputs.output_dir (override with --output-dir). NOTE: expert_weights and the routing_entropy column are a PLACEHOLDER SURROGATE derived from SNN activity, not the source model's real MoE router - no model weights are read, and routing_entropy stays within ~1% of its uniform maximum over this run.",
+  "inputs": {
+    "source_manifest": "manifests/examples/olmoe-1b-7b-instruct.json",
+    "goz1_ref": "manifests/examples/goz1-pack-example.json"
+  },
+  "outputs": {
+    "manifest_id": "olmoe-saaq-example-v1",
+    "output_dir": "artifacts/saaq/olmoe-saaq-example"
+  },
+  "saaq": {
+    "projection_mode": "SpikingTernary",
+    "snn_steps": 20,
+    "thresholds": [1.0, 5.0, 1.0, 5.0],
+    "update_rule": "SaaqV1_5SqrtRate",
+    "dual_rule": true,
+    "num_experts": 8,
+    "top_k": 2,
+    "telemetry": {
+      "source": "synthetic",
+      "ticks": 16,
+      "tick_interval_ms": 250,
+      "start_timestamp_ms": 0,
+      "start": {
+        "gpu_temp_c": 58.0,
+        "gpu_power_w": 240.0,
+        "cpu_tctl_c": 62.0,
+        "cpu_package_power_w": 95.0
+      },
+      "delta": {
+        "gpu_temp_c": 0.6,
+        "gpu_power_w": 3.0,
+        "cpu_tctl_c": 0.45,
+        "cpu_package_power_w": 2.5
+      }
+    }
+  }
+}

@@ -246,6 +246,8 @@ pub struct SyntheticTelemetry {
 pub struct SaaqRunConfig {
     pub recipe_id: String,
     pub recipe_path: PathBuf,
+    /// SHA256 of the same raw UTF-8 recipe buffer that supplied this config.
+    pub recipe_sha256: String,
     pub description: Option<String>,
     pub source_manifest: Option<ResolvedRef>,
     pub goz1_ref: Option<ResolvedRef>,
@@ -329,6 +331,7 @@ impl SaaqRunConfig {
             .canonicalize()
             .unwrap_or_else(|_| recipe_path.to_path_buf());
         let recipe_path = retained_recipe_path.as_path();
+        let recipe_sha256 = checksum::compute_string_sha256(contents);
         let value: serde_json::Value = serde_json::from_str(contents)
             .map_err(|e| format!("Failed to parse recipe '{}': {}", recipe_path.display(), e))?;
         reject_explicit_nulls(&value, "")?;
@@ -470,6 +473,7 @@ impl SaaqRunConfig {
         Ok(Self {
             recipe_id,
             recipe_path: recipe_path.to_path_buf(),
+            recipe_sha256,
             description: raw.description,
             source_manifest,
             goz1_ref,
@@ -1375,6 +1379,9 @@ fn build_run_manifest(
             "recipe_id": config.recipe_id,
             "type": "saaq",
             "path": config.recipe_path.display().to_string(),
+            // Pin the raw buffer that supplied the retained effective config;
+            // the path can be edited or replaced after validation.
+            "sha256": config.recipe_sha256,
             "description": config.description,
         },
         "inputs": {
@@ -2002,6 +2009,28 @@ mod tests {
             manifest["inputs"]["source_manifest"]["sha256"],
             validated_sha256
         );
+    }
+
+    #[test]
+    fn run_manifest_pins_the_recipe_bytes_that_were_parsed() {
+        let recipe_dir = TempDir::new().unwrap();
+        let recipe_path = recipe_dir.path().join("recipe.json");
+        let validated_recipe = recipe_json(2, "");
+        std::fs::write(&recipe_path, &validated_recipe).unwrap();
+
+        let out = TempDir::new().unwrap();
+        let config = SaaqRunConfig::load(&recipe_path, Some(out.path())).unwrap();
+        let validated_sha256 = checksum::compute_string_sha256(&validated_recipe);
+
+        // Mutating the recipe after load must not make the completed manifest
+        // attribute the retained configuration to later bytes at that path.
+        std::fs::write(&recipe_path, recipe_json(99, "")).unwrap();
+        let report = execute(&config).unwrap();
+        let manifest: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(report.run_manifest_path).unwrap())
+                .unwrap();
+        assert_eq!(manifest["recipe"]["sha256"], validated_sha256);
+        assert_eq!(manifest["ticks"], 2);
     }
 
     #[test]

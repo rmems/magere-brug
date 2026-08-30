@@ -1157,7 +1157,7 @@ pub fn execute(config: &SaaqRunConfig) -> Result<SaaqRunReport, String> {
             )
         })
     });
-    if output_targets[0] == output_targets[1] {
+    if paths_alias(&output_targets[0], &output_targets[1]) {
         return Err(format!(
             "run outputs '{}' and '{}' alias the same filesystem target '{}'; remove the \
              alias or choose a different --output-dir",
@@ -1194,7 +1194,7 @@ pub fn execute(config: &SaaqRunConfig) -> Result<SaaqRunReport, String> {
     if let Some((field, input, output)) = inputs.iter().find_map(|(field, input)| {
         output_targets
             .iter()
-            .find(|output| *input == output.as_path())
+            .find(|output| paths_alias(input, output))
             .map(|output| (*field, *input, output))
     }) {
         return Err(format!(
@@ -1260,6 +1260,12 @@ pub fn execute(config: &SaaqRunConfig) -> Result<SaaqRunReport, String> {
         latent_csv_sha256,
         run_manifest_path,
     })
+}
+
+/// Whether two pathnames identify the same existing file (including hard
+/// links), or are already the same retained path when one no longer exists.
+fn paths_alias(left: &Path, right: &Path) -> bool {
+    left == right || same_file::is_same_file(left, right).unwrap_or(false)
 }
 
 /// Render an `f32` as JSON without f64-widening artefacts: `0.45_f32 as f64`
@@ -2316,6 +2322,44 @@ mod tests {
             std::fs::read_to_string(&latent_path).unwrap(),
             "previous latent bytes\n",
             "alias detection must run before either output is overwritten"
+        );
+    }
+
+    #[test]
+    fn refuses_output_paths_that_are_hard_links_to_the_same_file() {
+        let out = TempDir::new().unwrap();
+        let latent_path = out.path().join(LATENT_CSV_FILE);
+        let manifest_path = out.path().join(RUN_MANIFEST_FILE);
+        std::fs::write(&latent_path, "previous shared bytes\n").unwrap();
+        std::fs::hard_link(&latent_path, &manifest_path).unwrap();
+
+        let error = config_from(&recipe_json(2, ""), out.path())
+            .and_then(|config| execute(&config).map(|_| ()))
+            .unwrap_err();
+        assert!(error.contains("alias"), "unexpected error: {error}");
+        assert_eq!(
+            std::fs::read_to_string(&latent_path).unwrap(),
+            "previous shared bytes\n",
+            "hard-link detection must run before either output is overwritten"
+        );
+    }
+
+    #[test]
+    fn refuses_a_protected_input_hard_linked_to_an_output() {
+        let out = TempDir::new().unwrap();
+        let telemetry_path = out.path().join("telemetry.csv");
+        let telemetry = "timestamp_ms,gpu_temp_c,gpu_power_w,cpu_tctl_c,cpu_package_power_w\n\
+             0,58.0,240.0,62.0,95.0\n";
+        std::fs::write(&telemetry_path, telemetry).unwrap();
+        let config = config_from(&csv_recipe_json(&telemetry_path), out.path()).unwrap();
+        std::fs::hard_link(&telemetry_path, out.path().join(LATENT_CSV_FILE)).unwrap();
+
+        let error = execute(&config).unwrap_err();
+        assert!(error.contains("own output"), "unexpected error: {error}");
+        assert_eq!(
+            std::fs::read_to_string(&telemetry_path).unwrap(),
+            telemetry,
+            "hard-link detection must run before the input is overwritten"
         );
     }
 

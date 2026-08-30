@@ -1043,6 +1043,7 @@ dependencies = [
  "jsonschema",
  "magere-corinth-core",
  "miette",
+ "same-file",
  "serde",
  "serde_json",
  "sha2",

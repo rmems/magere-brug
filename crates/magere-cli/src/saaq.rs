@@ -213,6 +213,12 @@ pub enum TelemetrySource {
     Csv {
         path: PathBuf,
         snapshots: Vec<TelemetrySnapshot>,
+        /// SHA256 of the exact UTF-8 byte buffer parsed into `snapshots`.
+        ///
+        /// Keeping the digest beside the retained rows prevents the run
+        /// manifest from attributing them to a later version of a telemetry
+        /// file that changed after validation.
+        sha256: String,
     },
 }
 
@@ -647,10 +653,11 @@ fn parse_telemetry(raw: RawTelemetry, recipe_path: &Path) -> Result<TelemetrySou
                 resolve_input_ref("saaq.telemetry.path", reference, recipe_path)?.resolved_path;
             // Parse eagerly so a malformed CSV fails validation, not mid-run,
             // and keep the rows so execution never re-reads the file.
-            let snapshots = read_telemetry_csv(&resolved)?;
+            let (snapshots, sha256) = read_telemetry_csv(&resolved)?;
             Ok(TelemetrySource::Csv {
                 path: resolved,
                 snapshots,
+                sha256,
             })
         }
         other => Err(format!(
@@ -757,9 +764,13 @@ fn synthetic_snapshot(synthetic: &SyntheticTelemetry, tick: usize) -> TelemetryS
 /// The header names the columns (order is free) and must contain every entry of
 /// [`TELEMETRY_CSV_COLUMNS`]; extra columns are ignored. Blank lines are
 /// skipped so a trailing newline is not an error.
-fn read_telemetry_csv(path: &Path) -> Result<Vec<TelemetrySnapshot>, String> {
+fn read_telemetry_csv(path: &Path) -> Result<(Vec<TelemetrySnapshot>, String), String> {
     let contents = std::fs::read_to_string(path)
         .map_err(|e| format!("Failed to read telemetry CSV '{}': {}", path.display(), e))?;
+    // Hash the same in-memory bytes parsed below. Re-reading the path after the
+    // CPU-heavy run would let an appending/replaced capture make the manifest
+    // name bytes that never produced the retained snapshots.
+    let sha256 = checksum::compute_string_sha256(&contents);
 
     // Line numbers are captured before blank lines are filtered so an error
     // points at the line the reader would find in an editor, not at an index
@@ -887,7 +898,7 @@ fn read_telemetry_csv(path: &Path) -> Result<Vec<TelemetrySnapshot>, String> {
         }
     }
 
-    Ok(snapshots)
+    Ok((snapshots, sha256))
 }
 
 // ── Deterministic routing surrogate ───────────────────────────────────────
@@ -1158,13 +1169,13 @@ fn build_run_manifest(
             "delta": channels_json(&synthetic.delta),
             "note": "channel c at tick i = start.c + delta.c * i; timestamps are recipe-derived, not wall-clock",
         }),
-        TelemetrySource::Csv { path, .. } => serde_json::json!({
+        TelemetrySource::Csv { path, sha256, .. } => serde_json::json!({
             "source": "csv",
             "path": path.display().to_string(),
             // The path alone is a mutable reference: without the digest of the
             // bytes that actually drove this run, the manifest cannot be used
             // to verify the run was reproduced from the same input.
-            "sha256": checksum::compute_file_sha256(path).unwrap_or_else(|_| "unavailable".into()),
+            "sha256": sha256,
             "ticks": snapshots.len(),
         }),
     };
@@ -1755,6 +1766,37 @@ mod tests {
         assert!(rows[0].starts_with("0,"));
         assert!(rows[1].starts_with("250,"));
         assert!(rows[2].starts_with("500,"));
+    }
+
+    #[test]
+    fn run_manifest_hashes_the_csv_bytes_that_were_parsed() {
+        let out = TempDir::new().unwrap();
+        let telemetry_path = out.path().join("telemetry.csv");
+        let parsed_bytes = "timestamp_ms,gpu_temp_c,gpu_power_w,cpu_tctl_c,cpu_package_power_w\n\
+             0,58.0,240.0,62.0,95.0\n\
+             250,59.2,246.0,62.9,100.0\n";
+        std::fs::write(&telemetry_path, parsed_bytes).unwrap();
+
+        let config = config_from(&csv_recipe_json(&telemetry_path), out.path()).unwrap();
+        let parsed_sha256 = checksum::compute_string_sha256(parsed_bytes);
+
+        // Simulate a capture process appending after validation. Execution uses
+        // the snapshots retained in `config`, so provenance must retain the
+        // digest of `parsed_bytes` rather than re-read this later file state.
+        std::fs::write(
+            &telemetry_path,
+            format!("{parsed_bytes}500,60.4,252.0,63.8,105.0\n"),
+        )
+        .unwrap();
+        let later_sha256 = checksum::compute_file_sha256(&telemetry_path).unwrap();
+        assert_ne!(parsed_sha256, later_sha256);
+
+        let report = execute(&config).unwrap();
+        let manifest: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&report.run_manifest_path).unwrap())
+                .unwrap();
+        assert_eq!(manifest["telemetry"]["sha256"], parsed_sha256);
+        assert_eq!(manifest["telemetry"]["ticks"], 2);
     }
 
     #[test]

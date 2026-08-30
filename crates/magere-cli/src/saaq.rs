@@ -945,6 +945,16 @@ fn read_telemetry_csv(path: &Path) -> Result<(Vec<TelemetrySnapshot>, String), S
                 .count()
                 + 1
         });
+        if fields.len() != columns.len() {
+            return Err(format!(
+                "Telemetry CSV '{}' line {} has {} fields but the header has {}; every row \
+                 must match the header exactly",
+                path.display(),
+                line_no,
+                fields.len(),
+                columns.len()
+            ));
+        }
         let field = |index: usize, name: &str| -> Result<&str, String> {
             fields.get(index).ok_or_else(|| {
                 format!(
@@ -2094,6 +2104,32 @@ mod tests {
         assert_eq!(rows.len(), 2);
         assert!(rows[0].starts_with("0,"));
         assert!(rows[1].starts_with("250,"));
+    }
+
+    #[test]
+    fn csv_telemetry_rejects_rows_that_do_not_match_the_header_width() {
+        for row in [
+            // An extra numeric field before gpu_temp_c must not shift every
+            // subsequent required column while still parsing successfully.
+            "0,999.0,58.0,240.0,62.0,95.0\n",
+            // Nor may a short row silently omit the final required value.
+            "0,58.0,240.0,62.0\n",
+        ] {
+            let out = TempDir::new().unwrap();
+            let telemetry_path = out.path().join("telemetry.csv");
+            std::fs::write(
+                &telemetry_path,
+                format!(
+                    "timestamp_ms,gpu_temp_c,gpu_power_w,cpu_tctl_c,cpu_package_power_w\n{row}"
+                ),
+            )
+            .unwrap();
+
+            let error = config_from(&csv_recipe_json(&telemetry_path), out.path()).unwrap_err();
+            assert!(error.contains("fields"), "unexpected error: {error}");
+            assert!(error.contains("header"), "unexpected error: {error}");
+            assert!(error.contains("must match"), "unexpected error: {error}");
+        }
     }
 
     #[test]

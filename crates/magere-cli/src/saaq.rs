@@ -215,7 +215,7 @@ pub enum TelemetrySource {
     Csv {
         path: PathBuf,
         snapshots: Vec<TelemetrySnapshot>,
-        /// SHA256 of the exact UTF-8 byte buffer parsed into `snapshots`.
+        /// SHA256 of the raw UTF-8 file buffer that supplied `snapshots`.
         ///
         /// Keeping the digest beside the retained rows prevents the run
         /// manifest from attributing them to a later version of a telemetry
@@ -816,15 +816,16 @@ fn synthetic_snapshot(synthetic: &SyntheticTelemetry, tick: usize) -> TelemetryS
 fn read_telemetry_csv(path: &Path) -> Result<(Vec<TelemetrySnapshot>, String), String> {
     let contents = std::fs::read_to_string(path)
         .map_err(|e| format!("Failed to read telemetry CSV '{}': {}", path.display(), e))?;
-    // Hash the same in-memory bytes parsed below. Re-reading the path after the
-    // CPU-heavy run would let an appending/replaced capture make the manifest
-    // name bytes that never produced the retained snapshots.
+    // Hash the raw bytes from the same read used below. A leading BOM remains
+    // part of the pinned source even though the parser treats it as an encoding
+    // marker rather than part of the first header name.
     let sha256 = checksum::compute_string_sha256(&contents);
+    let parsed_contents = contents.strip_prefix('\u{feff}').unwrap_or(&contents);
 
     // Line numbers are captured before blank lines are filtered so an error
     // points at the line the reader would find in an editor, not at an index
     // into the surviving data rows.
-    let mut lines = contents
+    let mut lines = parsed_contents
         .lines()
         .enumerate()
         .map(|(index, line)| (index + 1, line.trim()))
@@ -1310,6 +1311,13 @@ mod tests {
         repo_root().join("manifests/examples/olmoe-1b-7b-instruct.json")
     }
 
+    /// Encode a path for interpolation inside an existing JSON string literal.
+    fn json_path(path: &Path) -> String {
+        let encoded = serde_json::to_string(path.to_string_lossy().as_ref())
+            .expect("paths must serialize as JSON strings");
+        encoded[1..encoded.len() - 1].to_string()
+    }
+
     /// A minimal but complete `saaq` recipe; `extra` is spliced into the
     /// `saaq` block so individual tests can override single fields.
     fn recipe_json(ticks: usize, extra: &str) -> String {
@@ -1336,7 +1344,7 @@ mod tests {
     }}{extra}
   }}
 }}"#,
-            manifest = example_manifest().display(),
+            manifest = json_path(&example_manifest()),
         )
     }
 
@@ -1549,7 +1557,7 @@ mod tests {
     fn rejects_input_ref_that_does_not_resolve() {
         let out = TempDir::new().unwrap();
         let json = recipe_json(2, "").replace(
-            &example_manifest().display().to_string(),
+            &json_path(&example_manifest()),
             "manifests/examples/does-not-exist.json",
         );
         let error = config_from(&json, out.path()).unwrap_err();
@@ -1587,7 +1595,7 @@ mod tests {
         let json = recipe_json(2, "").replace(
             &format!(
                 "\"inputs\": {{ \"source_manifest\": \"{}\" }},",
-                example_manifest().display()
+                json_path(&example_manifest())
             ),
             "",
         );
@@ -1695,14 +1703,22 @@ mod tests {
     }
 
     #[test]
+    fn recipe_schema_num_experts_max_matches_the_embedding_dim() {
+        let schema: serde_json::Value =
+            serde_json::from_str(include_str!("../../../schemas/recipe.schema.json")).unwrap();
+        let maximum = schema
+            .pointer("/properties/saaq/properties/num_experts/maximum")
+            .and_then(serde_json::Value::as_u64)
+            .expect("recipe schema must declare saaq.num_experts.maximum");
+        assert_eq!(maximum as usize, magere_corinth_core::EMBEDDING_DIM);
+    }
+
+    #[test]
     fn input_refs_do_not_escape_the_repository_tree() {
         let out = TempDir::new().unwrap();
         // An unbounded ancestor walk used to resolve this to /etc/hostname and
         // record a system file as the run's provenance.
-        let json = recipe_json(2, "").replace(
-            example_manifest().display().to_string().as_str(),
-            "etc/hostname",
-        );
+        let json = recipe_json(2, "").replace(&json_path(&example_manifest()), "etc/hostname");
         let error = config_from(&json, out.path()).unwrap_err();
         assert!(
             error.contains("source_manifest"),
@@ -1713,10 +1729,8 @@ mod tests {
     #[test]
     fn input_refs_reject_parent_directory_segments() {
         let out = TempDir::new().unwrap();
-        let json = recipe_json(2, "").replace(
-            example_manifest().display().to_string().as_str(),
-            "../../../../etc/hostname",
-        );
+        let json =
+            recipe_json(2, "").replace(&json_path(&example_manifest()), "../../../../etc/hostname");
         let error = config_from(&json, out.path()).unwrap_err();
         assert!(
             error.contains("must not contain '..'"),
@@ -1736,10 +1750,7 @@ mod tests {
         std::fs::write(&outside_manifest, "outside").unwrap();
         symlink(&outside_manifest, tree.path().join("escape.json")).unwrap();
 
-        let json = recipe_json(2, "").replace(
-            example_manifest().display().to_string().as_str(),
-            "escape.json",
-        );
+        let json = recipe_json(2, "").replace(&json_path(&example_manifest()), "escape.json");
         let error =
             SaaqRunConfig::from_json(&json, &tree.path().join("recipe.json"), Some(tree.path()))
                 .unwrap_err();
@@ -1797,8 +1808,8 @@ mod tests {
 
         let out = TempDir::new().unwrap();
         let json = recipe_json(2, "").replace(
-            example_manifest().display().to_string().as_str(),
-            &source_manifest.display().to_string(),
+            &json_path(&example_manifest()),
+            &json_path(&source_manifest),
         );
         let config = config_from(&json, out.path()).unwrap();
         let validated_sha256 = checksum::compute_string_sha256(validated_bytes);
@@ -1869,8 +1880,8 @@ mod tests {
     "telemetry": {{ "source": "csv", "path": "{telemetry}" }}
   }}
 }}"#,
-            manifest = example_manifest().display(),
-            telemetry = telemetry_path.display(),
+            manifest = json_path(&example_manifest()),
+            telemetry = json_path(telemetry_path),
         )
     }
 
@@ -1896,6 +1907,25 @@ mod tests {
         assert!(rows[0].starts_with("0,"));
         assert!(rows[1].starts_with("250,"));
         assert!(rows[2].starts_with("500,"));
+    }
+
+    #[test]
+    fn csv_telemetry_accepts_a_utf8_bom_and_pins_the_raw_file() {
+        let out = TempDir::new().unwrap();
+        let telemetry_path = out.path().join("telemetry.csv");
+        let telemetry = "\u{feff}timestamp_ms,gpu_temp_c,gpu_power_w,cpu_tctl_c,cpu_package_power_w\n\
+             0,58.0,240.0,62.0,95.0\n";
+        std::fs::write(&telemetry_path, telemetry).unwrap();
+
+        let report = run(&csv_recipe_json(&telemetry_path), out.path()).unwrap();
+        let manifest: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&report.run_manifest_path).unwrap())
+                .unwrap();
+        assert_eq!(manifest["telemetry"]["ticks"], 1);
+        assert_eq!(
+            manifest["telemetry"]["sha256"],
+            checksum::compute_string_sha256(telemetry)
+        );
     }
 
     #[test]

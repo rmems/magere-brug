@@ -319,7 +319,7 @@ Located in `manifests/examples/`:
 
 ### Flow
 
-```
+```text
 configs/recipes/saaq-example.json          (recipe: refs + SAAQ config)
   ↓ validate: type, projection mode, update rule, thresholds, snn_steps, input refs on disk
 telemetry stream                            (synthetic ramp, or replayed from a telemetry CSV)
@@ -372,7 +372,7 @@ Input refs (`inputs.source_manifest`, `inputs.goz1_ref`) must resolve to a file 
 
 **`latent_telemetry.csv`** — one row per tick, in the exact `SnnLatentCsvExporter` column layout:
 
-```
+```csv
 timestamp_ms,avg_pop_firing_rate_hz,membrane_dv_dt,routing_entropy,saaq_delta_q_prev,saaq_delta_q_target,gpu_temp_c,gpu_power_w,cpu_tctl_c,cpu_package_power_w,saaq_delta_q_legacy_prev,saaq_delta_q_legacy_target,saaq_delta_q_v15_prev,saaq_delta_q_v15_target
 ```
 

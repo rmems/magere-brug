@@ -1,0 +1,32 @@
+docs/ARCHITECTURE.md
+  s_84ebba55a49cad::t_7d836d0f2ae034 369
+crates/magere-cli/src/saaq.rs
+  s_84ebba55a49cad::t_0447ab56b4d348 737-747,749-769,779-781,783-784
+  s_84ebba55a49cad::t_9672e13a47aa98 707-722,724-726,732
+  s_84ebba55a49cad::t_f7ddd262de05c7 691-693,695-697
+  s_84ebba55a49cad::t_8320ae37ee2c48 201-202
+  s_84ebba55a49cad::t_63e11e7e829240 1089-1091
+  s_84ebba55a49cad::t_fd29e8e6921f3c 1093-1117,1122
+  s_84ebba55a49cad::t_71ee9ffc314872 1216-1218
+  s_84ebba55a49cad::t_457e72ea4d886a 1714-1743,1745-1751
+  s_84ebba55a49cad::t_34b9c9e7b3c356 1792-1819
+  s_84ebba55a49cad::t_ad0550beb43076 790-792
+  s_84ebba55a49cad::t_66534bd466ea99 2056-2073
+  s_84ebba55a49cad::t_2cb072d140c9c8 771-778,782,785
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "3e4e09955195fa0d8d9ba84baf1cd4c6c1f373c5",
+  "prompts": {},
+  "sessions": {
+    "s_84ebba55a49cad": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0547a-2a35-7472-803b-c01cd77eb2b4",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "Raul Montoya Cardenas <montoyaraul34@gmail.com>"
+    }
+  }
+}

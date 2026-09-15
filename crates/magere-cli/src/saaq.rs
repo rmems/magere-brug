@@ -118,6 +118,13 @@ struct RawRecipe {
     outputs: Option<RawOutputs>,
     #[serde(default)]
     saaq: Option<RawSaaq>,
+    /// Accepted so richer pipeline recipes (handoff / calibration) still load.
+    #[serde(default)]
+    #[allow(dead_code)]
+    calibration: Option<serde_json::Value>,
+    #[serde(default)]
+    #[allow(dead_code)]
+    handoff: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -127,6 +134,9 @@ struct RawInputs {
     source_manifest: Option<String>,
     #[serde(default)]
     goz1_ref: Option<String>,
+    #[serde(default)]
+    #[allow(dead_code)]
+    source_format: Option<String>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -138,6 +148,24 @@ struct RawOutputs {
     manifest_id: Option<String>,
     #[serde(default)]
     output_dir: Option<String>,
+    #[serde(default)]
+    #[allow(dead_code)]
+    artifact_path: Option<String>,
+    #[serde(default)]
+    #[allow(dead_code)]
+    goz1_version: Option<u32>,
+    #[serde(default)]
+    #[allow(dead_code)]
+    checksum_algorithm: Option<String>,
+    #[serde(default)]
+    #[allow(dead_code)]
+    register: Option<bool>,
+    #[serde(default)]
+    #[allow(dead_code)]
+    registry_path: Option<String>,
+    #[serde(default)]
+    #[allow(dead_code)]
+    lineage: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Default, Deserialize)]

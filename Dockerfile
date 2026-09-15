@@ -43,6 +43,14 @@ COPY --from=builder /app/scripts/ /app/scripts/
 RUN pip3 install --break-system-packages --no-cache-dir jsonschema
 
 WORKDIR /app
+
+# `configs/recipes/saaq-example.json` writes to the repo-relative
+# `artifacts/saaq/...`, which resolves under the root-owned /app. Pre-create it
+# owned by the runtime user so the documented
+# `magere run-saaq configs/recipes/saaq-example.json` works in the image
+# without an explicit --output-dir or mount.
+RUN mkdir -p /app/artifacts && chown -R appuser:appuser /app/artifacts
+
 USER appuser
 
 ENTRYPOINT ["magere"]

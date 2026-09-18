@@ -1,0 +1,26 @@
+crates/magere-cli/src/recipe/mod.rs
+  s_26485182b27748::t_d43d00f5f9ec00 148-151
+  s_26485182b27748::t_a90306cf61da99 346,350-355
+  s_26485182b27748::t_db4497a6de338c 432-433
+  s_26485182b27748::t_c56c698c09c583 268
+crates/magere-cli/src/recipe/tests_apply_saaq.rs
+  s_26485182b27748::t_30723bdf38e5bd 1-248
+crates/magere-cli/src/recipe/validate.rs
+  s_26485182b27748::t_a63d2420c48d30 92,95-96
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "6565d5f4428d156f5fd412cac5c9c6474949e590",
+  "prompts": {},
+  "sessions": {
+    "s_26485182b27748": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "eb30a824-871f-4e2e-b337-7102cd2f91c7",
+        "model": "grok-4.6"
+      },
+      "human_author": "Raul Cardenas Montoya <montoyaraul34@gmail.com>"
+    }
+  }
+}

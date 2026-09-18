@@ -151,8 +151,7 @@ fn test_saaq_requires_source_manifest_or_goz1_ref() {
           "recipe_id": "saaq-ok",
           "type": "saaq",
           "inputs": { "source_manifest": "manifest.json" },
-          "outputs": { "output_dir": "/runs/saaq" },
-          "calibration": { "dataset": "wikitext-2", "sample_count": 128, "seed": 7 }
+          "outputs": { "output_dir": "/runs/saaq" }
         }"#,
         &sample_manifest_json("sample-v1", "sample_model", "safetensors"),
     );

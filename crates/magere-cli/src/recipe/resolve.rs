@@ -19,6 +19,19 @@ pub(super) fn reference_escapes_upward(reference: &str) -> bool {
         .any(|component| matches!(component, std::path::Component::ParentDir))
 }
 
+/// True when `id` is a single filename component with no separators or roots.
+///
+/// Used before joining a caller-controlled identifier onto an output directory
+/// so `../x` or `/tmp/x` cannot escape that directory.
+pub(super) fn is_filename_safe_id(id: &str) -> bool {
+    if id.is_empty() || id.contains('/') || id.contains('\\') {
+        return false;
+    }
+    let mut components = Path::new(id).components();
+    matches!(components.next(), Some(std::path::Component::Normal(_)))
+        && components.next().is_none()
+}
+
 /// Marks the boundary the reference search must not cross.
 ///
 /// `.git` is a directory in a normal clone and a file in a linked worktree, so
@@ -91,6 +104,12 @@ impl Recipe {
             ));
         }
 
+        if Path::new(reference).is_absolute() {
+            return Err(format!(
+                "{label} '{reference}' must be a repository-relative path, not an absolute path"
+            ));
+        }
+
         if reference_escapes_upward(reference) {
             return Err(format!(
                 "{label} '{reference}' must not contain '..' segments; recipe inputs are \
@@ -129,18 +148,15 @@ impl Recipe {
     /// tree the recipe lives in.
     pub(super) fn resolve_reference(&self, reference: &str) -> Option<PathBuf> {
         let candidate = Path::new(reference);
-
         if candidate.is_absolute() {
-            return candidate.is_file().then(|| candidate.to_path_buf());
+            return None;
         }
 
-        let Some(dir) = self.source_path.as_deref().and_then(Path::parent) else {
-            return candidate.is_file().then(|| candidate.to_path_buf());
-        };
+        let dir = self.source_path.as_deref().and_then(Path::parent)?;
 
         for ancestor in self.search_roots(dir) {
             let joined = ancestor.join(candidate);
-            if joined.is_file() {
+            if joined.is_file() && stays_inside_boundary(&joined, self.search_boundary(dir)) {
                 return Some(joined);
             }
         }
@@ -150,7 +166,7 @@ impl Recipe {
 
     /// Directories a relative reference may be resolved against, nearest first.
     fn search_roots<'a>(&self, dir: &'a Path) -> Vec<&'a Path> {
-        match dir.ancestors().find(|ancestor| is_repo_root(ancestor)) {
+        match self.search_boundary(dir) {
             Some(root) => dir
                 .ancestors()
                 .take_while(|ancestor| *ancestor != root)
@@ -158,5 +174,25 @@ impl Recipe {
                 .collect(),
             None => vec![dir],
         }
+    }
+
+    fn search_boundary<'a>(&self, dir: &'a Path) -> Option<&'a Path> {
+        dir.ancestors().find(|ancestor| is_repo_root(ancestor))
+    }
+}
+
+fn stays_inside_boundary(path: &Path, boundary: Option<&Path>) -> bool {
+    let Some(boundary) = boundary else {
+        let Some(parent) = path.parent() else {
+            return false;
+        };
+        return match (path.canonicalize(), parent.canonicalize()) {
+            (Ok(canon), Ok(bound)) => canon.starts_with(&bound),
+            _ => false,
+        };
+    };
+    match (path.canonicalize(), boundary.canonicalize()) {
+        (Ok(canon), Ok(bound)) => canon.starts_with(&bound),
+        _ => false,
     }
 }

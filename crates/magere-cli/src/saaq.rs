@@ -317,9 +317,22 @@ pub fn run_saaq_command(
     output_dir_override: Option<&Path>,
 ) -> Result<String, String> {
     let config = SaaqRunConfig::load(recipe_path, output_dir_override)?;
-    let report = execute(&config)?;
+    Ok(format_saaq_report(&config, execute(&config)?))
+}
 
-    Ok(format!(
+/// Execute a SAAQ recipe from already-read JSON so apply does not reread the file.
+pub fn run_saaq_from_json(
+    contents: &str,
+    recipe_path: &Path,
+    output_dir_override: Option<&Path>,
+) -> Result<String, String> {
+    let config = SaaqRunConfig::from_json(contents, recipe_path, output_dir_override)?;
+    validate_saaq_recipe_invariants(contents, &config)?;
+    Ok(format_saaq_report(&config, execute(&config)?))
+}
+
+fn format_saaq_report(config: &SaaqRunConfig, report: SaaqRunReport) -> String {
+    format!(
         "✓ SAAQ run '{}' complete ({} ticks, projection {}, rule {}{})\n  \
          latent telemetry: {}\n  sha256:           {}\n  run manifest:     {}",
         config.recipe_id,
@@ -330,7 +343,67 @@ pub fn run_saaq_command(
         report.latent_csv_path.display(),
         report.latent_csv_sha256,
         report.run_manifest_path.display(),
-    ))
+    )
+}
+
+/// Reject SAAQ fields the runner does not consume, and enforce source-format assertions.
+pub(crate) fn validate_saaq_recipe_invariants(
+    contents: &str,
+    config: &SaaqRunConfig,
+) -> Result<(), String> {
+    let value: serde_json::Value = serde_json::from_str(contents)
+        .map_err(|e| format!("Failed to parse recipe for SAAQ invariants: {e}"))?;
+    reject_unconsumed_saaq_fields(&value)?;
+    assert_declared_source_format(&value, config)
+}
+
+fn reject_unconsumed_saaq_fields(value: &serde_json::Value) -> Result<(), String> {
+    if value.get("calibration").is_some() {
+        return Err(
+            "calibration is not consumed by the SAAQ runner; omit it or use a pack recipe"
+                .to_string(),
+        );
+    }
+    if value.pointer("/outputs/register") == Some(&serde_json::Value::Bool(true)) {
+        return Err(
+            "saaq recipes do not register artifacts; omit outputs.register or use type 'register'"
+                .to_string(),
+        );
+    }
+    if value.pointer("/outputs/registry_path").is_some() {
+        return Err("saaq recipes do not write a registry; omit outputs.registry_path".to_string());
+    }
+    Ok(())
+}
+
+fn assert_declared_source_format(
+    value: &serde_json::Value,
+    config: &SaaqRunConfig,
+) -> Result<(), String> {
+    let Some(expected) = value
+        .pointer("/inputs/source_format")
+        .and_then(serde_json::Value::as_str)
+    else {
+        return Ok(());
+    };
+    let Some(resolved) = &config.source_manifest else {
+        return Err(
+            "inputs.source_format is set but inputs.source_manifest could not be resolved"
+                .to_string(),
+        );
+    };
+    let manifest = crate::manifest::Manifest::from_file(&resolved.resolved_path)
+        .map_err(|e| format!("failed to load {}: {e}", resolved.resolved_path.display()))?;
+    manifest.validate()?;
+    if manifest.source_artifact.format == expected {
+        Ok(())
+    } else {
+        Err(format!(
+            "inputs.source_format '{expected}' does not match the referenced manifest's \
+             source_artifact.format '{}'",
+            manifest.source_artifact.format
+        ))
+    }
 }
 
 // ── Recipe loading + validation ───────────────────────────────────────────
@@ -340,7 +413,9 @@ impl SaaqRunConfig {
     pub fn load(recipe_path: &Path, output_dir_override: Option<&Path>) -> Result<Self, String> {
         let contents = std::fs::read_to_string(recipe_path)
             .map_err(|e| format!("Failed to read recipe '{}': {}", recipe_path.display(), e))?;
-        Self::from_json(&contents, recipe_path, output_dir_override)
+        let config = Self::from_json(&contents, recipe_path, output_dir_override)?;
+        validate_saaq_recipe_invariants(&contents, &config)?;
+        Ok(config)
     }
 
     /// Turn recipe JSON into a validated run configuration.
@@ -526,7 +601,7 @@ impl SaaqRunConfig {
 /// non-null type when present. Treating `null` as absence would silently apply
 /// defaults to malformed experiment parameters, so enforce that distinction
 /// across the complete recipe tree before typed deserialization.
-fn reject_explicit_nulls(value: &serde_json::Value, path: &str) -> Result<(), String> {
+pub(crate) fn reject_explicit_nulls(value: &serde_json::Value, path: &str) -> Result<(), String> {
     match value {
         serde_json::Value::Null => {
             let field = if path.is_empty() { "recipe" } else { path };

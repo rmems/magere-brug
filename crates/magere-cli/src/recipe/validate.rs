@@ -8,9 +8,11 @@ impl Recipe {
     pub(super) fn validate_semantics(&self) -> Result<(), String> {
         self.require_inputs_for_type()?;
         self.reject_register_calibration()?;
+        self.reject_unconsumed_saaq_fields()?;
         self.validate_declared_source_format()?;
         self.validate_outputs()?;
-        self.validate_references()
+        self.validate_references()?;
+        self.validate_saaq_runner_agreement()
     }
 
     fn require_inputs_for_type(&self) -> Result<(), String> {
@@ -55,6 +57,45 @@ impl Recipe {
             );
         }
         Ok(())
+    }
+
+    fn reject_unconsumed_saaq_fields(&self) -> Result<(), String> {
+        if self.recipe_type != RecipeType::Saaq {
+            return Ok(());
+        }
+        if self.calibration.is_some() {
+            return Err(
+                "calibration is not consumed by the SAAQ runner; omit it or use a pack recipe"
+                    .to_string(),
+            );
+        }
+        if let Some(outputs) = &self.outputs {
+            if outputs.register == Some(true) {
+                return Err(
+                    "saaq recipes do not register artifacts; omit outputs.register or use type 'register'"
+                        .to_string(),
+                );
+            }
+            if outputs.registry_path.is_some() {
+                return Err(
+                    "saaq recipes do not write a registry; omit outputs.registry_path".to_string(),
+                );
+            }
+        }
+        Ok(())
+    }
+
+    fn validate_saaq_runner_agreement(&self) -> Result<(), String> {
+        if self.recipe_type != RecipeType::Saaq {
+            return Ok(());
+        }
+        let (Some(path), Some(json)) = (&self.source_path, &self.source_json) else {
+            return Ok(());
+        };
+        let contents = serde_json::to_string(json)
+            .map_err(|e| format!("failed to serialize recipe for SAAQ validation: {e}"))?;
+        let config = crate::saaq::SaaqRunConfig::from_json(&contents, path, None)?;
+        crate::saaq::validate_saaq_recipe_invariants(&contents, &config)
     }
 
     fn validate_declared_source_format(&self) -> Result<(), String> {
@@ -142,13 +183,7 @@ impl Recipe {
 
     fn validate_generated_format(&self, outputs: &RecipeOutputs) -> Result<(), String> {
         let Some(generated_format) = outputs.generated_format.as_deref() else {
-            if self.recipe_type.is_pack() || self.recipe_type == RecipeType::GgufExport {
-                return Err(format!(
-                    "recipe type '{}' requires outputs.generated_format",
-                    self.recipe_type
-                ));
-            }
-            return Ok(());
+            return self.require_generated_format_when_needed();
         };
         if !VALID_GENERATED_FORMATS.contains(&generated_format) {
             return Err(format!(
@@ -156,13 +191,25 @@ impl Recipe {
                 VALID_GENERATED_FORMATS.join(", ")
             ));
         }
+        self.generated_format_matches_type(generated_format)
+    }
+
+    fn require_generated_format_when_needed(&self) -> Result<(), String> {
+        if self.recipe_type.is_pack() || self.recipe_type == RecipeType::GgufExport {
+            return Err(format!(
+                "recipe type '{}' requires outputs.generated_format",
+                self.recipe_type
+            ));
+        }
+        Ok(())
+    }
+
+    fn generated_format_matches_type(&self, generated_format: &str) -> Result<(), String> {
         match self.recipe_type {
             RecipeType::Goz1Pack if generated_format != "goz1" => Err(format!(
                 "a goz1_pack recipe must set outputs.generated_format to 'goz1' (got '{generated_format}')"
             )),
-            RecipeType::TernaryPack
-                if generated_format != "goz1" && generated_format != "ternary" =>
-            {
+            RecipeType::TernaryPack if !matches!(generated_format, "goz1" | "ternary") => {
                 Err(format!(
                     "a ternary_pack recipe must set outputs.generated_format to 'goz1' or 'ternary' (got '{generated_format}')"
                 ))
@@ -253,27 +300,39 @@ impl Recipe {
         else {
             return Ok(());
         };
-        if let Some(expected) = self
+        self.assert_declared_source_format(&manifest)?;
+        self.validate_typed_source_constraints(&manifest)
+    }
+
+    fn assert_declared_source_format(&self, manifest: &Manifest) -> Result<(), String> {
+        let Some(expected) = self
             .inputs
             .as_ref()
             .and_then(|inputs| inputs.source_format.as_deref())
-            && manifest.source_artifact.format != expected
-        {
-            return Err(format!(
+        else {
+            return Ok(());
+        };
+        if manifest.source_artifact.format == expected {
+            Ok(())
+        } else {
+            Err(format!(
                 "inputs.source_format '{expected}' does not match the referenced manifest's \
                  source_artifact.format '{}'",
                 manifest.source_artifact.format
-            ));
+            ))
         }
+    }
+
+    fn validate_typed_source_constraints(&self, manifest: &Manifest) -> Result<(), String> {
         if self.recipe_type.is_pack() {
             self.reject_unpackable_source_format(&manifest.source_artifact.format)?;
-            self.validate_pack_lineage(&manifest)?;
+            self.validate_pack_lineage(manifest)?;
         }
         if self.recipe_type == RecipeType::GgufExport {
             self.reject_unexportable_source_format(&manifest.source_artifact.format)?;
         }
         if self.recipe_type == RecipeType::Register {
-            self.validate_register_manifest_identity(&manifest)?;
+            self.validate_register_manifest_identity(manifest)?;
         }
         Ok(())
     }

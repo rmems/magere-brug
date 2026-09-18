@@ -1,4 +1,5 @@
 use super::*;
+use crate::manifest::Manifest;
 use crate::registry::ArtifactRegistry;
 use tempfile::TempDir;
 
@@ -329,4 +330,266 @@ fn test_saaq_requires_outputs_with_output_dir() {
         .validate()
         .expect_err("a saaq recipe must declare where the run lands");
     assert!(err.contains("output_dir"), "{err}");
+}
+
+#[test]
+fn test_apply_does_not_truncate_in_place_manifest() {
+    let dir = TempDir::new().expect("temp dir");
+    let manifests = dir.path().join("manifests");
+    std::fs::create_dir_all(&manifests).expect("mkdir manifests");
+    let manifest_json = sample_manifest_json("sample-v1", "sample_model", "safetensors");
+    let manifest_path = manifests.join("sample-v1.json");
+    std::fs::write(&manifest_path, &manifest_json).expect("write source manifest");
+
+    let recipe_path = dir.path().join("recipe.json");
+    let output_dir = dir.path().to_string_lossy();
+    std::fs::write(
+        &recipe_path,
+        format!(
+            r#"{{
+          "recipe_id": "in-place-register",
+          "type": "register",
+          "inputs": {{ "source_manifest": "manifests/sample-v1.json" }},
+          "outputs": {{ "output_dir": {output_dir} }}
+        }}"#,
+            output_dir = serde_json::to_string(&output_dir).unwrap()
+        ),
+    )
+    .expect("write recipe");
+
+    let recipe = Recipe::from_file(&recipe_path).expect("load recipe");
+    recipe
+        .apply(Some(&dir.path().join("registry.json")))
+        .expect("in-place register must not destroy the source manifest");
+
+    let after = std::fs::read_to_string(&manifest_path).expect("read manifest after apply");
+    assert_eq!(
+        after, manifest_json,
+        "copying a manifest onto itself must not truncate it"
+    );
+    Manifest::from_json(&after)
+        .expect("parse")
+        .validate()
+        .expect("in-place apply must leave a valid manifest");
+}
+
+#[test]
+fn test_failed_emit_does_not_write_registry() {
+    let dir = TempDir::new().expect("temp dir");
+    std::fs::write(
+        dir.path().join("manifest.json"),
+        sample_manifest_json("sample-v1", "sample_model", "safetensors"),
+    )
+    .expect("write manifest");
+    let blocked = dir.path().join("blocked");
+    std::fs::write(&blocked, "not a directory").expect("block output_dir");
+    let recipe_path = dir.path().join("recipe.json");
+    std::fs::write(
+        &recipe_path,
+        format!(
+            r#"{{
+          "recipe_id": "emit-fails",
+          "type": "register",
+          "inputs": {{ "source_manifest": "manifest.json" }},
+          "outputs": {{ "output_dir": {} }}
+        }}"#,
+            serde_json::to_string(&blocked.to_string_lossy()).unwrap()
+        ),
+    )
+    .expect("write recipe");
+
+    let recipe = Recipe::from_file(&recipe_path).expect("load recipe");
+    let registry_path = dir.path().join("registry.json");
+    recipe
+        .apply(Some(&registry_path))
+        .expect_err("emit must fail when output_dir is a file");
+    assert!(
+        !registry_path.exists(),
+        "registry must not be published when artifact emission fails"
+    );
+}
+
+#[test]
+fn test_handoff_status_follows_combine_target() {
+    let dir = TempDir::new().expect("temp dir");
+    std::fs::write(
+        dir.path().join("manifest.json"),
+        sample_manifest_json("sample-v1", "sample_model", "safetensors"),
+    )
+    .expect("write manifest");
+    let recipe_path = dir.path().join("recipe.json");
+    std::fs::write(
+        &recipe_path,
+        r#"{
+          "recipe_id": "placeholder-handoff",
+          "type": "register",
+          "inputs": { "source_manifest": "manifest.json" },
+          "handoff": {
+            "combine_for_ai": { "enabled": false, "status": "placeholder" }
+          }
+        }"#,
+    )
+    .expect("write recipe");
+
+    let recipe = Recipe::from_file(&recipe_path).expect("load recipe");
+    let registry_path = dir.path().join("registry.json");
+    recipe.apply(Some(&registry_path)).expect("apply");
+
+    let handoff: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(dir.path().join("handoff").join("sample-v1.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(handoff["benchmark_linkage"]["status"], "placeholder");
+}
+
+#[test]
+fn test_unsafe_manifest_id_is_rejected_on_apply() {
+    let (dir, recipe) = recipe_in_temp_dir(
+        r#"{
+          "recipe_id": "unsafe-id",
+          "type": "register",
+          "inputs": { "source_manifest": "manifest.json" }
+        }"#,
+        &sample_manifest_json("../escape", "sample_model", "safetensors"),
+    );
+    let err = recipe
+        .apply(Some(&dir.path().join("registry.json")))
+        .expect_err("path-like manifest_id must not be used as a filename");
+    assert!(err.contains("filename-safe"), "{err}");
+}
+
+#[test]
+fn test_explicit_null_is_rejected() {
+    let (_dir, recipe) = recipe_in_temp_dir(
+        r#"{
+          "recipe_id": "null-format",
+          "type": "register",
+          "inputs": { "source_manifest": "manifest.json", "source_format": null }
+        }"#,
+        &sample_manifest_json("sample-v1", "sample_model", "safetensors"),
+    );
+    let err = recipe
+        .validate()
+        .expect_err("explicit null must not be treated as omitted");
+    assert!(err.contains("must not be null"), "{err}");
+}
+
+#[test]
+fn test_saaq_register_true_is_rejected() {
+    let dir = TempDir::new().expect("temp dir");
+    std::fs::write(
+        dir.path().join("manifest.json"),
+        sample_manifest_json("sample-v1", "sample_model", "safetensors"),
+    )
+    .expect("write manifest");
+    let recipe_path = dir.path().join("recipe.json");
+    std::fs::write(
+        &recipe_path,
+        format!(
+            r#"{{
+          "recipe_id": "saaq-register",
+          "type": "saaq",
+          "inputs": {{ "source_manifest": "manifest.json" }},
+          "outputs": {{ "output_dir": {}, "register": true }}
+        }}"#,
+            serde_json::to_string(&dir.path().join("out").to_string_lossy()).unwrap()
+        ),
+    )
+    .expect("write recipe");
+    let recipe = Recipe::from_file(&recipe_path).expect("load recipe");
+    let err = recipe
+        .validate()
+        .expect_err("saaq register:true must not silently succeed");
+    assert!(err.contains("do not register"), "{err}");
+}
+
+#[test]
+fn test_saaq_calibration_is_rejected() {
+    let dir = TempDir::new().expect("temp dir");
+    std::fs::write(
+        dir.path().join("manifest.json"),
+        sample_manifest_json("sample-v1", "sample_model", "safetensors"),
+    )
+    .expect("write manifest");
+    let recipe_path = dir.path().join("recipe.json");
+    std::fs::write(
+        &recipe_path,
+        format!(
+            r#"{{
+          "recipe_id": "saaq-cal",
+          "type": "saaq",
+          "inputs": {{ "source_manifest": "manifest.json" }},
+          "outputs": {{ "output_dir": {} }},
+          "calibration": {{ "dataset": "wikitext-2" }}
+        }}"#,
+            serde_json::to_string(&dir.path().join("out").to_string_lossy()).unwrap()
+        ),
+    )
+    .expect("write recipe");
+    let recipe = Recipe::from_file(&recipe_path).expect("load recipe");
+    let err = recipe
+        .validate()
+        .expect_err("unconsumed SAAQ calibration must be rejected");
+    assert!(err.contains("calibration"), "{err}");
+}
+
+#[test]
+fn test_saaq_knobs_are_checked_during_recipe_validate() {
+    let dir = TempDir::new().expect("temp dir");
+    std::fs::write(
+        dir.path().join("manifest.json"),
+        sample_manifest_json("sample-v1", "sample_model", "safetensors"),
+    )
+    .expect("write manifest");
+    let recipe_path = dir.path().join("recipe.json");
+    std::fs::write(
+        &recipe_path,
+        format!(
+            r#"{{
+          "recipe_id": "saaq-knobs",
+          "type": "saaq",
+          "inputs": {{ "source_manifest": "manifest.json" }},
+          "outputs": {{ "output_dir": {} }},
+          "saaq": {{ "num_experts": 2, "top_k": 3 }}
+        }}"#,
+            serde_json::to_string(&dir.path().join("out").to_string_lossy()).unwrap()
+        ),
+    )
+    .expect("write recipe");
+    let recipe = Recipe::from_file(&recipe_path).expect("load recipe");
+    let err = recipe
+        .validate()
+        .expect_err("SAAQ cross-field knobs must fail recipe validate");
+    assert!(
+        err.contains("top_k") || err.contains("num_experts"),
+        "{err}"
+    );
+}
+
+#[test]
+fn test_run_saaq_enforces_source_format() {
+    let dir = TempDir::new().expect("temp dir");
+    std::fs::write(
+        dir.path().join("manifest.json"),
+        sample_manifest_json("sample-v1", "sample_model", "safetensors"),
+    )
+    .expect("write manifest");
+    let recipe_path = dir.path().join("recipe.json");
+    let output_dir = dir.path().join("out");
+    std::fs::write(
+        &recipe_path,
+        format!(
+            r#"{{
+          "recipe_id": "saaq-format",
+          "type": "saaq",
+          "inputs": {{ "source_manifest": "manifest.json", "source_format": "gguf" }},
+          "outputs": {{ "output_dir": {} }}
+        }}"#,
+            serde_json::to_string(&output_dir.to_string_lossy()).unwrap()
+        ),
+    )
+    .expect("write recipe");
+    let err = crate::saaq::run_saaq_command(&recipe_path, None)
+        .expect_err("direct run-saaq must honor source_format");
+    assert!(err.contains("source_format"), "{err}");
 }

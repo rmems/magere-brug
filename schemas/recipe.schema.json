@@ -100,7 +100,7 @@
       "description": "Input references for the recipe",
       "properties": {
         "source_manifest": {
-          "description": "Path to the source model manifest (a `*.json` path is resolved and parsed) or a registry id",
+          "description": "Path to the source model manifest (a `*.json` path is resolved and parsed). Registry-id references are reserved for future support (issues #19/#8) and are rejected today.",
           "allOf": [
             {
               "$ref": "#/definitions/safe_string"
@@ -118,7 +118,7 @@
           "description": "Expected `source_artifact.format` of the referenced manifest. Declaring it turns the recipe into an assertion: validation fails when the manifest disagrees."
         },
         "goz1_ref": {
-          "description": "Path to a manifest carrying a registered GOZ1 pack, or a registry id (for post-pack steps such as SAAQ)",
+          "description": "Path to a manifest carrying a registered GOZ1 pack (for post-pack steps such as SAAQ). Registry-id references are reserved for future support (issues #19/#8) and are rejected today.",
           "allOf": [
             {
               "$ref": "#/definitions/safe_string"

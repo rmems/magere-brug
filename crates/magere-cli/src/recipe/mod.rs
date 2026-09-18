@@ -141,18 +141,22 @@ pub struct Recipe {
     /// relative manifest references without depending on the caller's cwd.
     #[serde(skip)]
     source_path: Option<PathBuf>,
+    /// Original JSON document, retained so schema validation sees explicit
+    /// `null` values that typed deserialization would otherwise drop.
+    #[serde(skip)]
+    source_json: Option<Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RecipeInputs {
-    /// Manifest path (`*.json`, resolved and parsed) or a registry id.
+    /// Manifest path (`*.json`, resolved and parsed). Registry ids are reserved.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub source_manifest: Option<String>,
     /// Asserted `source_artifact.format` of the referenced manifest.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub source_format: Option<String>,
-    /// Manifest carrying a registered GOZ1 pack, or a registry id.
+    /// Manifest carrying a registered GOZ1 pack. Registry ids are reserved.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub goz1_ref: Option<String>,
 }
@@ -254,7 +258,10 @@ pub struct HandoffTarget {
 impl Recipe {
     /// Load a recipe from a JSON string. Relative references resolve against cwd.
     pub fn from_json(json: &str) -> Result<Self, serde_json::Error> {
-        serde_json::from_str(json)
+        let value: Value = serde_json::from_str(json)?;
+        let mut recipe: Self = serde_json::from_value(value.clone())?;
+        recipe.source_json = Some(value);
+        Ok(recipe)
     }
 
     /// Load a recipe from a file. Relative references resolve against the recipe
@@ -273,10 +280,17 @@ impl Recipe {
     /// schema itself: every string leaf is a `safe_string` (which pattern-bans them)
     /// or a closed enum, and unknown keys are refused by `additionalProperties: false`.
     pub fn validate(&self) -> Result<(), String> {
-        let instance = serde_json::to_value(self)
-            .map_err(|e| format!("failed to serialize recipe for validation: {e}"))?;
+        let owned;
+        let instance = if let Some(value) = &self.source_json {
+            value
+        } else {
+            owned = serde_json::to_value(self)
+                .map_err(|e| format!("failed to serialize recipe for validation: {e}"))?;
+            &owned
+        };
 
-        resolve::validate_against_schema(&instance)?;
+        crate::saaq::reject_explicit_nulls(instance, "")?;
+        resolve::validate_against_schema(instance)?;
         self.validate_semantics()
     }
 
@@ -307,16 +321,31 @@ impl Recipe {
                  (type: register). Conversion from safetensors/HF is not implemented here",
                 self.recipe_id
             )),
-            RecipeType::Saaq => {
-                let path = self.source_path.as_ref().ok_or_else(|| {
-                    format!(
-                        "recipe '{}': saaq apply requires a recipe file path",
-                        self.recipe_id
-                    )
-                })?;
-                crate::saaq::run_saaq_command(path, None)
-            }
+            RecipeType::Saaq => self.apply_saaq(registry_override),
         }
+    }
+
+    fn apply_saaq(&self, registry_override: Option<&Path>) -> Result<String, String> {
+        if registry_override.is_some() {
+            return Err(format!(
+                "recipe '{}': saaq apply does not write a registry; omit --registry",
+                self.recipe_id
+            ));
+        }
+        let path = self.source_path.as_ref().ok_or_else(|| {
+            format!(
+                "recipe '{}': saaq apply requires a recipe file path",
+                self.recipe_id
+            )
+        })?;
+        let contents = match &self.source_json {
+            Some(value) => serde_json::to_string(value)
+                .map_err(|e| format!("failed to serialize recipe for SAAQ apply: {e}"))?,
+            None => {
+                std::fs::read_to_string(path).map_err(|e| format!("Failed to read recipe: {e}"))?
+            }
+        };
+        crate::saaq::run_saaq_from_json(&contents, path, None)
     }
 
     /// Effective value of `outputs.register`. A register recipe defaults to `true`

@@ -1,4 +1,4 @@
-use super::resolve::reference_escapes_upward;
+use super::resolve::{is_filename_safe_id, reference_escapes_upward};
 use super::*;
 use std::path::{Path, PathBuf};
 
@@ -162,4 +162,86 @@ fn marker_less_tree_still_resolves_a_sibling_reference() {
     recipe
         .validate()
         .expect("a sibling reference must still resolve");
+}
+
+#[test]
+fn filename_safe_ids_reject_path_components() {
+    assert!(is_filename_safe_id("sample-v1"));
+    assert!(is_filename_safe_id("model.v2"));
+    assert!(!is_filename_safe_id("../escape"));
+    assert!(!is_filename_safe_id("a/b"));
+    assert!(!is_filename_safe_id("/tmp/x"));
+    assert!(!is_filename_safe_id(""));
+}
+
+#[test]
+fn absolute_manifest_reference_is_rejected() {
+    let lab = tempfile::tempdir().expect("tempdir");
+    let outside = lab.path().join("outside.json");
+    std::fs::copy(
+        repo_root()
+            .join("manifests")
+            .join("examples")
+            .join("olmoe-1b-7b-instruct.json"),
+        &outside,
+    )
+    .expect("plant absolute manifest");
+
+    let dir = lab.path().join("repo");
+    std::fs::create_dir_all(&dir).expect("mkdir repo");
+    std::fs::write(dir.join("Cargo.lock"), "").expect("repo marker");
+    let recipe_path = dir.join("abs.json");
+    std::fs::write(
+        &recipe_path,
+        format!(
+            r#"{{"recipe_id":"abs-test","type":"register",
+            "inputs":{{"source_manifest":{}}},
+            "outputs":{{"manifest_id":"olmoe-1b-7b-instruct-v1"}}}}"#,
+            serde_json::to_string(&outside.to_string_lossy()).unwrap()
+        ),
+    )
+    .expect("write recipe");
+
+    let recipe = Recipe::from_file(&recipe_path).expect("recipe loads");
+    let err = recipe
+        .validate()
+        .expect_err("absolute source_manifest must be rejected");
+    assert!(err.contains("absolute"), "unexpected error: {err}");
+}
+
+#[test]
+fn symlink_escape_is_rejected() {
+    let lab = tempfile::tempdir().expect("tempdir");
+    let outside = lab.path().join("planted.json");
+    std::fs::copy(
+        repo_root()
+            .join("manifests")
+            .join("examples")
+            .join("olmoe-1b-7b-instruct.json"),
+        &outside,
+    )
+    .expect("plant outside manifest");
+
+    let dir = lab.path().join("repo");
+    std::fs::create_dir_all(&dir).expect("mkdir repo");
+    std::fs::write(dir.join("Cargo.lock"), "").expect("repo marker");
+    std::os::unix::fs::symlink(&outside, dir.join("link.json")).expect("symlink");
+
+    let recipe_path = dir.join("link-recipe.json");
+    std::fs::write(
+        &recipe_path,
+        r#"{"recipe_id":"symlink-test","type":"register",
+            "inputs":{"source_manifest":"link.json"},
+            "outputs":{"manifest_id":"olmoe-1b-7b-instruct-v1"}}"#,
+    )
+    .expect("write recipe");
+
+    let recipe = Recipe::from_file(&recipe_path).expect("recipe loads");
+    let err = recipe
+        .validate()
+        .expect_err("a symlink that leaves the repository must not resolve");
+    assert!(
+        err.contains("could not be resolved") || err.contains("absolute"),
+        "unexpected error: {err}"
+    );
 }

@@ -89,13 +89,11 @@ impl Recipe {
         if self.recipe_type != RecipeType::Saaq {
             return Ok(());
         }
-        let (Some(path), Some(json)) = (&self.source_path, &self.source_json) else {
+        let (Some(path), Some(contents)) = (&self.source_path, &self.source_text) else {
             return Ok(());
         };
-        let contents = serde_json::to_string(json)
-            .map_err(|e| format!("failed to serialize recipe for SAAQ validation: {e}"))?;
-        let config = crate::saaq::SaaqRunConfig::from_json(&contents, path, None)?;
-        crate::saaq::validate_saaq_recipe_invariants(&contents, &config)
+        let config = crate::saaq::SaaqRunConfig::from_json(contents, path, None)?;
+        crate::saaq::validate_saaq_recipe_invariants(contents, &config)
     }
 
     fn validate_declared_source_format(&self) -> Result<(), String> {

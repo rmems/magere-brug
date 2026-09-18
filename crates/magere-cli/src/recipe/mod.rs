@@ -145,6 +145,10 @@ pub struct Recipe {
     /// `null` values that typed deserialization would otherwise drop.
     #[serde(skip)]
     source_json: Option<Value>,
+    /// Exact UTF-8 text passed to [`Self::from_json`]. SAAQ apply hashes this
+    /// buffer so `run_manifest.json` matches `magere run-saaq` and the file.
+    #[serde(skip)]
+    source_text: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -261,6 +265,7 @@ impl Recipe {
         let value: Value = serde_json::from_str(json)?;
         let mut recipe: Self = serde_json::from_value(value.clone())?;
         recipe.source_json = Some(value);
+        recipe.source_text = Some(json.to_string());
         Ok(recipe)
     }
 
@@ -338,14 +343,16 @@ impl Recipe {
                 self.recipe_id
             )
         })?;
-        let contents = match &self.source_json {
-            Some(value) => serde_json::to_string(value)
-                .map_err(|e| format!("failed to serialize recipe for SAAQ apply: {e}"))?,
-            None => {
-                std::fs::read_to_string(path).map_err(|e| format!("Failed to read recipe: {e}"))?
-            }
-        };
+        let contents = self.loaded_recipe_text(path)?;
         crate::saaq::run_saaq_from_json(&contents, path, None)
+    }
+
+    /// Prefer the bytes that produced this `Recipe`; never re-serialize JSON.
+    fn loaded_recipe_text(&self, path: &Path) -> Result<String, String> {
+        if let Some(text) = &self.source_text {
+            return Ok(text.clone());
+        }
+        std::fs::read_to_string(path).map_err(|e| format!("Failed to read recipe: {e}"))
     }
 
     /// Effective value of `outputs.register`. A register recipe defaults to `true`
@@ -421,5 +428,7 @@ fn apply_command(path: &Path, registry: Option<&Path>) -> Result<String, String>
 mod tests;
 #[cfg(test)]
 mod tests_apply;
+#[cfg(test)]
+mod tests_apply_saaq;
 #[cfg(test)]
 mod tests_resolve;

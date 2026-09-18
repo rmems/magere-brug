@@ -182,36 +182,6 @@ fn test_gguf_export_rejects_existing_gguf_source() {
 }
 
 #[test]
-fn test_apply_saaq_delegates_to_runner() {
-    let dir = TempDir::new().expect("temp dir");
-    std::fs::write(
-        dir.path().join("manifest.json"),
-        sample_manifest_json("sample-v1", "sample_model", "safetensors"),
-    )
-    .expect("write manifest");
-    let output_dir = dir.path().join("saaq-run");
-    let recipe_path = dir.path().join("recipe.json");
-    std::fs::write(
-        &recipe_path,
-        format!(
-            r#"{{
-          "recipe_id": "saaq-delegates",
-          "type": "saaq",
-          "inputs": {{ "source_manifest": "manifest.json" }},
-          "outputs": {{ "output_dir": {} }}
-        }}"#,
-            serde_json::to_string(&output_dir.to_string_lossy()).unwrap()
-        ),
-    )
-    .expect("write recipe");
-    let recipe = Recipe::from_file(&recipe_path).expect("load recipe");
-    let output = recipe.apply(None).expect("saaq apply should run");
-    assert!(output.contains("SAAQ run"), "{output}");
-    assert!(output_dir.join("latent_telemetry.csv").is_file());
-    assert!(output_dir.join("run_manifest.json").is_file());
-}
-
-#[test]
 fn test_summary_reports_type_and_runner_owner() {
     let (_dir, recipe) = recipe_in_temp_dir(
         r#"{
@@ -312,24 +282,6 @@ fn test_pack_rejects_unpackable_resolved_manifest_format() {
         .validate()
         .expect_err("a pack recipe over a gguf manifest must not validate");
     assert!(err.contains("cannot pack source format 'gguf'"), "{err}");
-}
-
-#[test]
-fn test_saaq_requires_outputs_with_output_dir() {
-    let (_dir, recipe) = recipe_in_temp_dir(
-        r#"{
-          "recipe_id": "saaq-no-output-dir",
-          "type": "saaq",
-          "inputs": { "source_manifest": "manifest.json" },
-          "outputs": { "checksum_algorithm": "sha256" }
-        }"#,
-        &sample_manifest_json("sample-v1", "sample_model", "safetensors"),
-    );
-
-    let err = recipe
-        .validate()
-        .expect_err("a saaq recipe must declare where the run lands");
-    assert!(err.contains("output_dir"), "{err}");
 }
 
 #[test]
@@ -472,124 +424,4 @@ fn test_explicit_null_is_rejected() {
         .validate()
         .expect_err("explicit null must not be treated as omitted");
     assert!(err.contains("must not be null"), "{err}");
-}
-
-#[test]
-fn test_saaq_register_true_is_rejected() {
-    let dir = TempDir::new().expect("temp dir");
-    std::fs::write(
-        dir.path().join("manifest.json"),
-        sample_manifest_json("sample-v1", "sample_model", "safetensors"),
-    )
-    .expect("write manifest");
-    let recipe_path = dir.path().join("recipe.json");
-    std::fs::write(
-        &recipe_path,
-        format!(
-            r#"{{
-          "recipe_id": "saaq-register",
-          "type": "saaq",
-          "inputs": {{ "source_manifest": "manifest.json" }},
-          "outputs": {{ "output_dir": {}, "register": true }}
-        }}"#,
-            serde_json::to_string(&dir.path().join("out").to_string_lossy()).unwrap()
-        ),
-    )
-    .expect("write recipe");
-    let recipe = Recipe::from_file(&recipe_path).expect("load recipe");
-    let err = recipe
-        .validate()
-        .expect_err("saaq register:true must not silently succeed");
-    assert!(err.contains("do not register"), "{err}");
-}
-
-#[test]
-fn test_saaq_calibration_is_rejected() {
-    let dir = TempDir::new().expect("temp dir");
-    std::fs::write(
-        dir.path().join("manifest.json"),
-        sample_manifest_json("sample-v1", "sample_model", "safetensors"),
-    )
-    .expect("write manifest");
-    let recipe_path = dir.path().join("recipe.json");
-    std::fs::write(
-        &recipe_path,
-        format!(
-            r#"{{
-          "recipe_id": "saaq-cal",
-          "type": "saaq",
-          "inputs": {{ "source_manifest": "manifest.json" }},
-          "outputs": {{ "output_dir": {} }},
-          "calibration": {{ "dataset": "wikitext-2" }}
-        }}"#,
-            serde_json::to_string(&dir.path().join("out").to_string_lossy()).unwrap()
-        ),
-    )
-    .expect("write recipe");
-    let recipe = Recipe::from_file(&recipe_path).expect("load recipe");
-    let err = recipe
-        .validate()
-        .expect_err("unconsumed SAAQ calibration must be rejected");
-    assert!(err.contains("calibration"), "{err}");
-}
-
-#[test]
-fn test_saaq_knobs_are_checked_during_recipe_validate() {
-    let dir = TempDir::new().expect("temp dir");
-    std::fs::write(
-        dir.path().join("manifest.json"),
-        sample_manifest_json("sample-v1", "sample_model", "safetensors"),
-    )
-    .expect("write manifest");
-    let recipe_path = dir.path().join("recipe.json");
-    std::fs::write(
-        &recipe_path,
-        format!(
-            r#"{{
-          "recipe_id": "saaq-knobs",
-          "type": "saaq",
-          "inputs": {{ "source_manifest": "manifest.json" }},
-          "outputs": {{ "output_dir": {} }},
-          "saaq": {{ "num_experts": 2, "top_k": 3 }}
-        }}"#,
-            serde_json::to_string(&dir.path().join("out").to_string_lossy()).unwrap()
-        ),
-    )
-    .expect("write recipe");
-    let recipe = Recipe::from_file(&recipe_path).expect("load recipe");
-    let err = recipe
-        .validate()
-        .expect_err("SAAQ cross-field knobs must fail recipe validate");
-    assert!(
-        err.contains("top_k") || err.contains("num_experts"),
-        "{err}"
-    );
-}
-
-#[test]
-fn test_run_saaq_enforces_source_format() {
-    let dir = TempDir::new().expect("temp dir");
-    std::fs::write(
-        dir.path().join("manifest.json"),
-        sample_manifest_json("sample-v1", "sample_model", "safetensors"),
-    )
-    .expect("write manifest");
-    let recipe_path = dir.path().join("recipe.json");
-    let output_dir = dir.path().join("out");
-    std::fs::write(
-        &recipe_path,
-        format!(
-            r#"{{
-          "recipe_id": "saaq-format",
-          "type": "saaq",
-          "inputs": {{ "source_manifest": "manifest.json", "source_format": "gguf" }},
-          "outputs": {{ "output_dir": {} }}
-        }}"#,
-            serde_json::to_string(&output_dir.to_string_lossy()).unwrap()
-        ),
-    )
-    .expect("write recipe");
-    let err = crate::saaq::run_saaq_command(&recipe_path, None)
-        .expect_err("direct run-saaq must honor source_format");
-    assert!(err.contains("source_format"), "{err}");
 }

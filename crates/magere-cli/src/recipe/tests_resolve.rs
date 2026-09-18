@@ -165,6 +165,20 @@ fn marker_less_tree_still_resolves_a_sibling_reference() {
 }
 
 #[test]
+fn relative_recipe_path_still_resolves_repo_root_refs() {
+    let root = repo_root();
+    let previous = std::env::current_dir().expect("cwd");
+    std::env::set_current_dir(&root).expect("cd repo root");
+    let result = {
+        let recipe = Recipe::from_file("configs/recipes/gguf-export-placeholder-example.json")
+            .expect("relative recipe path loads");
+        recipe.validate()
+    };
+    std::env::set_current_dir(previous).expect("restore cwd");
+    result.expect("relative recipe paths must still resolve repo-root manifests");
+}
+
+#[test]
 fn filename_safe_ids_reject_path_components() {
     assert!(is_filename_safe_id("sample-v1"));
     assert!(is_filename_safe_id("model.v2"));

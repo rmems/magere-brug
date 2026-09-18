@@ -153,10 +153,14 @@ impl Recipe {
         }
 
         let dir = self.source_path.as_deref().and_then(Path::parent)?;
+        // `from_file("configs/recipes/x.json")` keeps a relative parent. Walking
+        // ancestors of that relative path ends at `""`, and `Path::new("").canonicalize()`
+        // fails, which made every in-repo reference look like an escape.
+        let dir = dir.canonicalize().ok()?;
 
-        for ancestor in self.search_roots(dir) {
+        for ancestor in self.search_roots(&dir) {
             let joined = ancestor.join(candidate);
-            if joined.is_file() && stays_inside_boundary(&joined, self.search_boundary(dir)) {
+            if joined.is_file() && stays_inside_boundary(&joined, self.search_boundary(&dir)) {
                 return Some(joined);
             }
         }
@@ -182,17 +186,20 @@ impl Recipe {
 }
 
 fn stays_inside_boundary(path: &Path, boundary: Option<&Path>) -> bool {
-    let Some(boundary) = boundary else {
-        let Some(parent) = path.parent() else {
-            return false;
-        };
-        return match (path.canonicalize(), parent.canonicalize()) {
-            (Ok(canon), Ok(bound)) => canon.starts_with(&bound),
-            _ => false,
-        };
+    let Some(bound) = canonical_boundary(boundary, path) else {
+        return false;
     };
-    match (path.canonicalize(), boundary.canonicalize()) {
-        (Ok(canon), Ok(bound)) => canon.starts_with(&bound),
-        _ => false,
+    path.canonicalize()
+        .ok()
+        .is_some_and(|canon| canon.starts_with(&bound))
+}
+
+fn canonical_boundary(boundary: Option<&Path>, path: &Path) -> Option<PathBuf> {
+    match boundary {
+        Some(boundary) if !boundary.as_os_str().is_empty() => boundary.canonicalize().ok(),
+        Some(_) => std::env::current_dir()
+            .ok()
+            .and_then(|cwd| cwd.canonicalize().ok()),
+        None => path.parent().and_then(|parent| parent.canonicalize().ok()),
     }
 }

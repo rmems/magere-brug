@@ -1,17 +1,9 @@
 use super::resolve::{is_filename_safe_id, reference_escapes_upward};
+use super::test_support::repo_root;
 use super::*;
-use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 static CWD_LOCK: Mutex<()> = Mutex::new(());
-
-fn repo_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("..")
-        .join("..")
-        .canonicalize()
-        .expect("repo root is reachable from CARGO_MANIFEST_DIR")
-}
 
 #[test]
 fn reference_does_not_resolve_above_the_repo_root() {

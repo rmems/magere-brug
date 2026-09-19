@@ -439,9 +439,13 @@ fn apply_command(path: &Path, registry: Option<&Path>) -> Result<String, String>
 }
 
 #[cfg(test)]
+mod test_support;
+#[cfg(test)]
 mod tests;
 #[cfg(test)]
-mod tests_apply;
+mod tests_apply_emit;
+#[cfg(test)]
+mod tests_apply_register;
 #[cfg(test)]
 mod tests_apply_saaq;
 #[cfg(test)]

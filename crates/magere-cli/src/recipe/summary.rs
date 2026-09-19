@@ -106,8 +106,8 @@ fn append_calibration(recipe: &Recipe, out: &mut String) {
 
 fn append_handoff(handoff: &Handoff, out: &mut String) {
     for (name, target) in handoff.targets() {
-        let status = target.status.as_deref().unwrap_or("placeholder");
-        let enabled = target.enabled.unwrap_or(false);
+        let status = target.effective_status();
+        let enabled = target.effective_enabled();
         out.push_str(&format!(
             "Handoff [{name}]: status={status}, enabled={enabled} (forward-declared; executed downstream)\n"
         ));

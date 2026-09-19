@@ -228,7 +228,7 @@
     },
     "calibration": {
       "type": "object",
-      "description": "Calibration dataset configuration. Only meaningful for the ternary/GOZ1 pack and SAAQ paths; `register` recipes must not carry it.",
+      "description": "Calibration dataset configuration for goz1_pack, ternary_pack, and gguf_export recipes.",
       "required": [
         "dataset"
       ],
@@ -630,6 +630,11 @@
           "inputs",
           "outputs"
         ],
+        "not": {
+          "required": [
+            "calibration"
+          ]
+        },
         "properties": {
           "inputs": {
             "anyOf": [

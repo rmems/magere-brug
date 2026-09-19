@@ -200,7 +200,7 @@ pub struct RecipeLineage {
     pub recipe_id: Option<String>,
 }
 
-/// Calibration config. Only meaningful for the ternary/GOZ1 pack and SAAQ paths.
+/// Calibration config for pack and export recipes that consume calibration data.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CalibrationConfig {
@@ -257,6 +257,20 @@ pub struct HandoffTarget {
     pub pipeline_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub notes: Option<String>,
+}
+
+impl HandoffTarget {
+    pub(super) fn effective_enabled(&self) -> bool {
+        self.enabled.unwrap_or(false)
+    }
+
+    pub(super) fn effective_status(&self) -> &str {
+        match (self.effective_enabled(), self.status.as_deref()) {
+            (false, Some("ready") | None) => "placeholder",
+            (true, None) => "ready",
+            (_, Some(status)) => status,
+        }
+    }
 }
 
 impl Recipe {

@@ -187,6 +187,35 @@ fn test_saaq_calibration_is_rejected() {
 }
 
 #[test]
+fn test_saaq_artifact_path_is_rejected() {
+    let dir = TempDir::new().expect("temp dir");
+    std::fs::write(
+        dir.path().join("manifest.json"),
+        sample_manifest_json("sample-v1", "sample_model", "safetensors"),
+    )
+    .expect("write manifest");
+    let recipe_path = dir.path().join("recipe.json");
+    std::fs::write(
+        &recipe_path,
+        format!(
+            r#"{{
+          "recipe_id": "saaq-artifact-path",
+          "type": "saaq",
+          "inputs": {{ "source_manifest": "manifest.json" }},
+          "outputs": {{ "output_dir": {}, "artifact_path": "unused.bin" }}
+        }}"#,
+            serde_json::to_string(&dir.path().join("out").to_string_lossy()).unwrap()
+        ),
+    )
+    .expect("write recipe");
+    let recipe = Recipe::from_file(&recipe_path).expect("load recipe");
+    let error = recipe
+        .validate()
+        .expect_err("SAAQ must reject an output it does not produce");
+    assert!(error.contains("artifact_path"), "{error}");
+}
+
+#[test]
 fn test_saaq_knobs_are_checked_during_recipe_validate() {
     let dir = TempDir::new().expect("temp dir");
     std::fs::write(

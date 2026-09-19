@@ -1,4 +1,5 @@
 use super::*;
+use crate::manifest::Manifest;
 use std::path::{Path, PathBuf};
 use tempfile::TempDir;
 
@@ -27,7 +28,7 @@ fn sample_manifest_json(manifest_id: &str, slug: &str, source_format: &str) -> S
   }},
   "source_artifact": {{
 "format": "{source_format}",
-"path": "/models/sample/model.{source_format}"
+"path": "model.{source_format}"
   }}
 }}"#
     )
@@ -37,6 +38,17 @@ fn sample_manifest_json(manifest_id: &str, slug: &str, source_format: &str) -> S
 fn recipe_in_temp_dir(recipe_json: &str, manifest_json: &str) -> (TempDir, Recipe) {
     let dir = TempDir::new().expect("temp dir");
     std::fs::write(dir.path().join("manifest.json"), manifest_json).expect("write manifest");
+    let manifest = Manifest::from_json(manifest_json).expect("parse fixture manifest");
+    if matches!(
+        manifest.source_artifact.format.as_str(),
+        "safetensors" | "gguf"
+    ) {
+        std::fs::write(
+            dir.path().join(&manifest.source_artifact.path),
+            b"fixture artifact",
+        )
+        .expect("write source artifact");
+    }
     let recipe_path = dir.path().join("recipe.json");
     std::fs::write(&recipe_path, recipe_json).expect("write recipe");
     let recipe = Recipe::from_file(&recipe_path).expect("load recipe");

@@ -51,7 +51,7 @@ impl Recipe {
     fn reject_register_calibration(&self) -> Result<(), String> {
         if self.recipe_type == RecipeType::Register && self.calibration.is_some() {
             return Err(
-                "calibration is only meaningful for the ternary/goz1 pack and saaq paths; \
+                "calibration is only accepted for goz1_pack, ternary_pack, and gguf_export recipes; \
                  a register recipe must not carry it"
                     .to_string(),
             );
@@ -65,7 +65,7 @@ impl Recipe {
         }
         if self.calibration.is_some() {
             return Err(
-                "calibration is not consumed by the SAAQ runner; omit it or use a pack recipe"
+                "saaq recipes do not support dataset calibration; omit calibration or use a pack recipe"
                     .to_string(),
             );
         }
@@ -79,6 +79,11 @@ impl Recipe {
             if outputs.registry_path.is_some() {
                 return Err(
                     "saaq recipes do not write a registry; omit outputs.registry_path".to_string(),
+                );
+            }
+            if outputs.artifact_path.is_some() {
+                return Err(
+                    "saaq recipes do not produce outputs.artifact_path; omit it".to_string()
                 );
             }
         }

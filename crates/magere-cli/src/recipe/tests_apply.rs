@@ -20,16 +20,28 @@ fn sample_manifest_json(manifest_id: &str, slug: &str, source_format: &str) -> S
   }},
   "source_artifact": {{
 "format": "{source_format}",
-"path": "/models/sample/model.{source_format}"
+"path": "model.{source_format}"
   }}
 }}"#
     )
 }
 
+fn write_manifest_with_artifact(path: &std::path::Path, manifest_json: &str) {
+    std::fs::write(path, manifest_json).expect("write manifest");
+    let manifest = Manifest::from_json(manifest_json).expect("parse fixture manifest");
+    if matches!(
+        manifest.source_artifact.format.as_str(),
+        "safetensors" | "gguf"
+    ) {
+        let artifact = path.parent().unwrap().join(&manifest.source_artifact.path);
+        std::fs::write(artifact, b"fixture artifact").expect("write source artifact");
+    }
+}
+
 /// Writes a manifest plus a recipe into a temp dir and loads the recipe.
 fn recipe_in_temp_dir(recipe_json: &str, manifest_json: &str) -> (TempDir, Recipe) {
     let dir = TempDir::new().expect("temp dir");
-    std::fs::write(dir.path().join("manifest.json"), manifest_json).expect("write manifest");
+    write_manifest_with_artifact(&dir.path().join("manifest.json"), manifest_json);
     let recipe_path = dir.path().join("recipe.json");
     std::fs::write(&recipe_path, recipe_json).expect("write recipe");
     let recipe = Recipe::from_file(&recipe_path).expect("load recipe");
@@ -127,6 +139,66 @@ fn test_apply_register_is_idempotent() {
     recipe
         .apply(Some(&registry_path))
         .expect("second register must replace rather than fail");
+}
+
+#[test]
+fn test_apply_rejects_manifest_id_owned_by_another_slug_before_emitting() {
+    let (dir, recipe) = recipe_in_temp_dir(
+        r#"{
+          "recipe_id": "manifest-owner",
+          "type": "register",
+          "inputs": { "source_manifest": "manifest.json" }
+        }"#,
+        &sample_manifest_json("shared-v1", "first_model", "safetensors"),
+    );
+    let registry_path = dir.path().join("registry.json");
+    recipe.apply(Some(&registry_path)).expect("first apply");
+    let emitted_path = dir.path().join("manifests").join("shared-v1.json");
+    let handoff_path = dir.path().join("handoff").join("shared-v1.json");
+    let emitted_before = std::fs::read(&emitted_path).unwrap();
+    let handoff_before = std::fs::read(&handoff_path).unwrap();
+
+    write_manifest_with_artifact(
+        &dir.path().join("manifest.json"),
+        &sample_manifest_json("shared-v1", "other_model", "safetensors"),
+    );
+    let error = recipe
+        .apply(Some(&registry_path))
+        .expect_err("another slug must not claim an existing manifest id");
+    assert!(
+        error.contains("already registered to model slug 'first_model'"),
+        "{error}"
+    );
+    assert_eq!(std::fs::read(emitted_path).unwrap(), emitted_before);
+    assert_eq!(std::fs::read(handoff_path).unwrap(), handoff_before);
+}
+
+#[test]
+fn test_apply_allows_same_slug_to_update_its_manifest() {
+    let (dir, recipe) = recipe_in_temp_dir(
+        r#"{
+          "recipe_id": "manifest-update",
+          "type": "register",
+          "inputs": { "source_manifest": "manifest.json" }
+        }"#,
+        &sample_manifest_json("sample-v1", "sample_model", "safetensors"),
+    );
+    let registry_path = dir.path().join("registry.json");
+    recipe.apply(Some(&registry_path)).expect("first apply");
+
+    write_manifest_with_artifact(
+        &dir.path().join("manifest.json"),
+        &sample_manifest_json("sample-v2", "sample_model", "safetensors"),
+    );
+    recipe
+        .apply(Some(&registry_path))
+        .expect("the owning slug may update its manifest");
+    let registry =
+        ArtifactRegistry::from_json(&std::fs::read_to_string(registry_path).unwrap()).unwrap();
+    assert_eq!(
+        registry.lookup("sample_model").unwrap().manifest_id,
+        "sample-v2"
+    );
 }
 
 #[test]
@@ -291,7 +363,7 @@ fn test_apply_does_not_truncate_in_place_manifest() {
     std::fs::create_dir_all(&manifests).expect("mkdir manifests");
     let manifest_json = sample_manifest_json("sample-v1", "sample_model", "safetensors");
     let manifest_path = manifests.join("sample-v1.json");
-    std::fs::write(&manifest_path, &manifest_json).expect("write source manifest");
+    write_manifest_with_artifact(&manifest_path, &manifest_json);
 
     let recipe_path = dir.path().join("recipe.json");
     let output_dir = dir.path().to_string_lossy();
@@ -328,11 +400,10 @@ fn test_apply_does_not_truncate_in_place_manifest() {
 #[test]
 fn test_failed_emit_does_not_write_registry() {
     let dir = TempDir::new().expect("temp dir");
-    std::fs::write(
-        dir.path().join("manifest.json"),
-        sample_manifest_json("sample-v1", "sample_model", "safetensors"),
-    )
-    .expect("write manifest");
+    write_manifest_with_artifact(
+        &dir.path().join("manifest.json"),
+        &sample_manifest_json("sample-v1", "sample_model", "safetensors"),
+    );
     let blocked = dir.path().join("blocked");
     std::fs::write(&blocked, "not a directory").expect("block output_dir");
     let recipe_path = dir.path().join("recipe.json");
@@ -364,11 +435,10 @@ fn test_failed_emit_does_not_write_registry() {
 #[test]
 fn test_handoff_status_follows_combine_target() {
     let dir = TempDir::new().expect("temp dir");
-    std::fs::write(
-        dir.path().join("manifest.json"),
-        sample_manifest_json("sample-v1", "sample_model", "safetensors"),
-    )
-    .expect("write manifest");
+    write_manifest_with_artifact(
+        &dir.path().join("manifest.json"),
+        &sample_manifest_json("sample-v1", "sample_model", "safetensors"),
+    );
     let recipe_path = dir.path().join("recipe.json");
     std::fs::write(
         &recipe_path,
@@ -377,13 +447,20 @@ fn test_handoff_status_follows_combine_target() {
           "type": "register",
           "inputs": { "source_manifest": "manifest.json" },
           "handoff": {
-            "combine_for_ai": { "enabled": false, "status": "placeholder" }
+            "combine_for_ai": { "enabled": false, "status": "ready" }
           }
         }"#,
     )
     .expect("write recipe");
 
     let recipe = Recipe::from_file(&recipe_path).expect("load recipe");
+    assert!(
+        recipe
+            .summary()
+            .contains("status=placeholder, enabled=false"),
+        "{}",
+        recipe.summary()
+    );
     let registry_path = dir.path().join("registry.json");
     recipe.apply(Some(&registry_path)).expect("apply");
 
@@ -392,6 +469,53 @@ fn test_handoff_status_follows_combine_target() {
     )
     .unwrap();
     assert_eq!(handoff["benchmark_linkage"]["status"], "placeholder");
+}
+
+#[test]
+fn test_missing_local_source_artifact_is_rejected_before_publication() {
+    let dir = TempDir::new().expect("temp dir");
+    std::fs::write(
+        dir.path().join("manifest.json"),
+        sample_manifest_json("missing-v1", "missing_model", "gguf"),
+    )
+    .expect("write manifest only");
+    let recipe_path = dir.path().join("recipe.json");
+    std::fs::write(
+        &recipe_path,
+        r#"{
+          "recipe_id": "missing-local-artifact",
+          "type": "register",
+          "inputs": { "source_manifest": "manifest.json" }
+        }"#,
+    )
+    .expect("write recipe");
+    let recipe = Recipe::from_file(recipe_path).expect("load recipe");
+    let registry_path = dir.path().join("registry.json");
+
+    let error = recipe
+        .apply(Some(&registry_path))
+        .expect_err("missing local source must be rejected");
+    assert!(error.contains("not an existing file"), "{error}");
+    assert!(!registry_path.exists());
+    assert!(!dir.path().join("manifests").exists());
+    assert!(!dir.path().join("handoff").exists());
+}
+
+#[test]
+fn test_non_file_source_formats_do_not_require_local_artifacts() {
+    for source_format in ["hf_repo", "local_dir"] {
+        let (dir, recipe) = recipe_in_temp_dir(
+            r#"{
+              "recipe_id": "source-only-register",
+              "type": "register",
+              "inputs": { "source_manifest": "manifest.json" }
+            }"#,
+            &sample_manifest_json("source-only-v1", "source_only", source_format),
+        );
+        recipe
+            .apply(Some(&dir.path().join("registry.json")))
+            .unwrap_or_else(|error| panic!("{source_format} should remain source-only: {error}"));
+    }
 }
 
 #[test]

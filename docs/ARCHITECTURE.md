@@ -181,7 +181,7 @@ Primary path: **packable source → ternary pack (`magere-grok-process`) → GOZ
 - `inputs.goz1_ref` — path of a registered GOZ1 pack
 - `outputs.generated_format` — prefer `goz1`; `gguf` only on the optional export placeholder
 - `outputs.output_dir` — directory for pack, export, or SAAQ run outputs
-- `calibration` — dataset config; forbidden on `register` (only recipes that need calibration)
+- `calibration` — dataset config for pack/export recipes; forbidden on `register` and `saaq`
 - `handoff` — forward-declared `myelin-accelerator` / `corinth-canal` / `combine-for-AI` placeholders (binary/ternary/SAAQ kernel families)
 - `saaq` — SAAQ runner configuration; only valid on `type: "saaq"` recipes (see [SAAQ Runner](#saaq-runner) below)
 
@@ -257,7 +257,7 @@ AWQ and GPTQ are **not** recipe types. They were removed from the primary path (
 | `outputs.register` | When true, the runner writes/updates the artifact manifest and adds it to the registry |
 | `outputs.registry_path` | Registry file to write; the `--registry` flag overrides it |
 | `outputs.lineage` | Provenance recorded on the emitted artifact so a pack traces back to its source |
-| `calibration` | Dataset, sample count, and seed. Only meaningful on the ternary/GOZ1 pack, optional GGUF export, and SAAQ paths — a `register` recipe must not carry it |
+| `calibration` | Dataset, sample count, and seed. Accepted by ternary/GOZ1 pack and optional GGUF export recipes; `register` and `saaq` recipes must not carry it |
 | `handoff` | Forward-declared placeholders for `myelin-accelerator` (binary/ternary/SAAQ kernels), `corinth-canal`, and `combine-for-AI`. magere-brug records the intent and lineage; it never executes CUDA kernels |
 
 Relative `inputs.*` references are resolved against the recipe file's directory up to the repository root, so a recipe in `configs/recipes/` can name a repo-root-relative `manifests/examples/*.json` from anywhere. Output paths (`registry_path`) resolve against the working directory.

@@ -1,6 +1,9 @@
 use super::resolve::{is_filename_safe_id, reference_escapes_upward};
 use super::*;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
+
+static CWD_LOCK: Mutex<()> = Mutex::new(());
 
 fn repo_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -166,6 +169,7 @@ fn marker_less_tree_still_resolves_a_sibling_reference() {
 
 #[test]
 fn relative_recipe_path_still_resolves_repo_root_refs() {
+    let _lock = CWD_LOCK.lock().unwrap();
     let root = repo_root();
     let previous = std::env::current_dir().expect("cwd");
     std::env::set_current_dir(&root).expect("cd repo root");
@@ -176,6 +180,39 @@ fn relative_recipe_path_still_resolves_repo_root_refs() {
     };
     std::env::set_current_dir(previous).expect("restore cwd");
     result.expect("relative recipe paths must still resolve repo-root manifests");
+}
+
+#[test]
+fn cwd_anchors_basename_file_and_in_memory_recipe_references() {
+    let _lock = CWD_LOCK.lock().unwrap();
+    let tree = tempfile::tempdir().expect("tempdir");
+    std::fs::write(tree.path().join("Cargo.lock"), "").expect("repo marker");
+    let manifests = tree.path().join("manifests");
+    std::fs::create_dir(&manifests).expect("manifest dir");
+    std::fs::copy(
+        repo_root().join("manifests/examples/olmoe-1b-7b-instruct.json"),
+        manifests.join("source.json"),
+    )
+    .expect("copy valid manifest");
+    let recipe_json = r#"{
+        "recipe_id":"cwd-reference",
+        "type":"register",
+        "inputs":{"source_manifest":"manifests/source.json"}
+    }"#;
+    std::fs::write(tree.path().join("recipe.json"), recipe_json).expect("write recipe");
+
+    let previous = std::env::current_dir().expect("cwd");
+    std::env::set_current_dir(tree.path()).expect("cd test repo");
+    let file_result = Recipe::from_file("recipe.json")
+        .expect("load basename recipe")
+        .validate();
+    let json_result = Recipe::from_json(recipe_json)
+        .expect("load in-memory recipe")
+        .validate();
+    std::env::set_current_dir(previous).expect("restore cwd");
+
+    file_result.expect("basename-only from_file should resolve from cwd");
+    json_result.expect("from_json should resolve from cwd");
 }
 
 #[test]

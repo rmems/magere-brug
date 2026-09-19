@@ -152,11 +152,20 @@ impl Recipe {
             return None;
         }
 
-        let dir = self.source_path.as_deref().and_then(Path::parent)?;
+        let source_dir = self
+            .source_path
+            .as_deref()
+            .and_then(Path::parent)
+            .filter(|parent| !parent.as_os_str().is_empty());
         // `from_file("configs/recipes/x.json")` keeps a relative parent. Walking
         // ancestors of that relative path ends at `""`, and `Path::new("").canonicalize()`
         // fails, which made every in-repo reference look like an escape.
-        let dir = dir.canonicalize().ok()?;
+        // A basename-only file path and an in-memory recipe both resolve from cwd.
+        let dir = source_dir
+            .map(Path::to_path_buf)
+            .or_else(|| std::env::current_dir().ok())?
+            .canonicalize()
+            .ok()?;
 
         for ancestor in self.search_roots(&dir) {
             let joined = ancestor.join(candidate);

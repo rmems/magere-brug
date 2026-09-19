@@ -118,7 +118,7 @@ struct RawRecipe {
     outputs: Option<RawOutputs>,
     #[serde(default)]
     saaq: Option<RawSaaq>,
-    /// Accepted so richer pipeline recipes (handoff / calibration) still load.
+    /// Retained only so validation can issue a clear SAAQ-specific error.
     #[serde(default)]
     #[allow(dead_code)]
     calibration: Option<serde_json::Value>,
@@ -360,7 +360,7 @@ pub(crate) fn validate_saaq_recipe_invariants(
 fn reject_unconsumed_saaq_fields(value: &serde_json::Value) -> Result<(), String> {
     if value.get("calibration").is_some() {
         return Err(
-            "calibration is not consumed by the SAAQ runner; omit it or use a pack recipe"
+            "saaq recipes do not support dataset calibration; omit calibration or use a pack recipe"
                 .to_string(),
         );
     }
@@ -372,6 +372,9 @@ fn reject_unconsumed_saaq_fields(value: &serde_json::Value) -> Result<(), String
     }
     if value.pointer("/outputs/registry_path").is_some() {
         return Err("saaq recipes do not write a registry; omit outputs.registry_path".to_string());
+    }
+    if value.pointer("/outputs/artifact_path").is_some() {
+        return Err("saaq recipes do not produce outputs.artifact_path; omit it".to_string());
     }
     Ok(())
 }
@@ -392,7 +395,20 @@ fn assert_declared_source_format(
                 .to_string(),
         );
     };
-    let manifest = crate::manifest::Manifest::from_file(&resolved.resolved_path)
+    let bytes = std::fs::read(&resolved.resolved_path)
+        .map_err(|e| format!("failed to load {}: {e}", resolved.resolved_path.display()))?;
+    let actual_sha256 = checksum::compute_bytes_sha256(&bytes);
+    if !actual_sha256.eq_ignore_ascii_case(&resolved.sha256) {
+        return Err(format!(
+            "failed to load {}: contents changed after validation (expected sha256 {}, got {})",
+            resolved.resolved_path.display(),
+            resolved.sha256,
+            actual_sha256
+        ));
+    }
+    let contents = std::str::from_utf8(&bytes)
+        .map_err(|e| format!("failed to load {}: {e}", resolved.resolved_path.display()))?;
+    let manifest = crate::manifest::Manifest::from_json(contents)
         .map_err(|e| format!("failed to load {}: {e}", resolved.resolved_path.display()))?;
     manifest.validate()?;
     if manifest.source_artifact.format == expected {
@@ -1939,6 +1955,43 @@ mod tests {
             "unexpected error: {error}"
         );
         assert!(error.contains("awq"), "unexpected error: {error}");
+    }
+
+    #[test]
+    fn rejects_unproduced_artifact_path() {
+        let out = TempDir::new().unwrap();
+        let json = recipe_json(2, "").replace(
+            "\"recipe_id\": \"unit-test-saaq\"",
+            "\"recipe_id\": \"unit-test-saaq\",\n  \"outputs\": { \"artifact_path\": \"unused.bin\" }",
+        );
+        let config = config_from(&json, out.path()).unwrap();
+        let error = validate_saaq_recipe_invariants(&json, &config).unwrap_err();
+        assert!(error.contains("outputs.artifact_path"), "{error}");
+    }
+
+    #[test]
+    fn source_format_validation_rejects_manifest_changed_after_resolution() {
+        let input = TempDir::new().unwrap();
+        let manifest_path = input.path().join("source.json");
+        let original = std::fs::read_to_string(example_manifest()).unwrap();
+        std::fs::write(&manifest_path, &original).unwrap();
+        let json = recipe_json(2, "")
+            .replace(&json_path(&example_manifest()), &json_path(&manifest_path))
+            .replace(
+                "\"inputs\": { \"source_manifest\":",
+                "\"inputs\": { \"source_format\": \"gguf\", \"source_manifest\":",
+            );
+        let out = TempDir::new().unwrap();
+        let config = config_from(&json, out.path()).unwrap();
+
+        let changed = original.replace("\"format\": \"gguf\"", "\"format\": \"safetensors\"");
+        std::fs::write(&manifest_path, changed).unwrap();
+        let error = validate_saaq_recipe_invariants(&json, &config).unwrap_err();
+        assert!(
+            error.contains("contents changed after validation"),
+            "{error}"
+        );
+        assert!(error.contains("sha256"), "{error}");
     }
 
     #[test]

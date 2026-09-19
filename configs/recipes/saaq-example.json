@@ -10,6 +10,20 @@
     "manifest_id": "olmoe-saaq-example-v1",
     "output_dir": "artifacts/saaq/olmoe-saaq-example"
   },
+  "handoff": {
+    "myelin_accelerator": {
+      "enabled": false,
+      "status": "placeholder",
+      "kernel_types": ["binary", "ternary", "saaq"],
+      "notes": "Forward-declared only. CUDA kernels for neuromorphic inference live in myelin-accelerator."
+    },
+    "combine_for_ai": {
+      "enabled": false,
+      "status": "placeholder",
+      "pipeline_id": "olmoe_baseline_csv_re4_control",
+      "notes": "Forward-declared only. Benchmark scoring is owned by combine-for-AI."
+    }
+  },
   "saaq": {
     "projection_mode": "SpikingTernary",
     "snn_steps": 20,

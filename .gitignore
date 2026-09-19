@@ -7,3 +7,6 @@ __pycache__/
 venv/
 *.egg-info/
 artifacts/saaq/
+artifacts/registry.json
+artifacts/manifests/
+artifacts/handoff/

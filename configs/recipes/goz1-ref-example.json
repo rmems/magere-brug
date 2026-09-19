@@ -1,10 +1,11 @@
 {
   "recipe_id": "olmoe-goz1-ref-example",
   "type": "goz1_pack",
-  "description": "Reference-only recipe: points at a source manifest and expects a GOZ1 pack. Packing CLI is issue #19.",
+  "description": "Reference-only recipe: packs the safetensors source recorded in goz1-pack-example.json and expects the GOZ1 pack that same manifest carries. Packing CLI is issue #19.",
   "inputs": {
-    "source_manifest": "manifests/examples/olmoe-1b-7b-instruct.json",
-    "goz1_ref": "manifests/examples/goz1-pack-example.json"
+    "source_manifest": "manifests/examples/goz1-pack-example.json",
+    "goz1_ref": "manifests/examples/goz1-pack-example.json",
+    "source_format": "safetensors"
   },
   "outputs": {
     "generated_format": "goz1",

@@ -1,0 +1,34 @@
+{
+  "recipe_id": "olmoe-register-gguf",
+  "type": "register",
+  "description": "Register the local OLMoE GGUF routing target so later SAAQ runs can reference it. No packing or conversion happens here; existing GGUF artifacts are registered as-is.",
+  "inputs": {
+    "source_manifest": "manifests/examples/olmoe-1b-7b-instruct.json",
+    "source_format": "gguf"
+  },
+  "outputs": {
+    "manifest_id": "olmoe-1b-7b-instruct-v1",
+    "register": true,
+    "registry_path": "artifacts/registry.json"
+  },
+  "handoff": {
+    "combine_for_ai": {
+      "enabled": true,
+      "status": "ready",
+      "pipeline_id": "olmoe_baseline_csv_re4_control",
+      "notes": "Existing GGUF can be benchmarked directly in combine-for-AI; magere recipe apply emits the handoff file."
+    },
+    "corinth_canal": {
+      "enabled": false,
+      "status": "placeholder",
+      "kernel_types": ["saaq"],
+      "notes": "Forward-declared only. The reference SAAQ implementation consumes this registration; the in-repo runner is magere run-saaq."
+    },
+    "myelin_accelerator": {
+      "enabled": false,
+      "status": "placeholder",
+      "kernel_types": ["binary", "ternary", "saaq"],
+      "notes": "Forward-declared only. Kernel execution lives in myelin-accelerator; magere-brug records lineage, not kernels."
+    }
+  }
+}

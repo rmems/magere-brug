@@ -22,6 +22,4 @@ miette = "7.6.0"
 chrono = { version = "0.4", features = ["serde"] }
 magere-corinth-core = { path = "../magere-corinth-core" }
 csv = "1.4.0"
-
-[dev-dependencies]
-tempfile = "3.8.1"
+tempfile = { workspace = true }

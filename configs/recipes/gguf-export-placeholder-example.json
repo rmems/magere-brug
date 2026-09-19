@@ -1,0 +1,23 @@
+{
+  "recipe_id": "redpajama-gguf-export-placeholder",
+  "type": "gguf_export",
+  "description": "Optional GGUF conversion placeholder from a safetensors source. Existing GGUF artifacts skip this step and use type register. magere recipe apply refuses to execute conversion.",
+  "inputs": {
+    "source_manifest": "manifests/examples/redpajama-incite-7b-chat.json",
+    "source_format": "safetensors"
+  },
+  "outputs": {
+    "generated_format": "gguf",
+    "checksum_algorithm": "sha256",
+    "manifest_id": "redpajama-incite-7b-chat-gguf-v1",
+    "artifact_path": "/exports/redpajama/INCITE-7B-Chat.gguf",
+    "output_dir": "/exports/redpajama"
+  },
+  "handoff": {
+    "combine_for_ai": {
+      "enabled": false,
+      "status": "placeholder",
+      "notes": "If a GGUF export is produced later, combine-for-AI can score it. Prefer registering an already-local GGUF instead."
+    }
+  }
+}

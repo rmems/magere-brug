@@ -51,9 +51,13 @@ const SKELETON_STATUS: &str = "planned";
 
 /// A recipe document as consumed by `magere pack-goz1`.
 ///
-/// Unknown top-level keys are ignored on purpose so recipes carrying blocks owned by other
-/// runners (e.g. a future `saaq` block) still load here; the `pack` block itself is strict.
+/// Strict like the inner blocks: a misspelled `outputs` or `inputs` would otherwise be
+/// ignored while this runner silently applies its defaults and registers an artifact under
+/// a name the recipe never asked for. The sibling `saaq` block is declared (and ignored) so
+/// a recipe file that declares both `pack` and `saaq` still loads; a future runner block
+/// must be added here alongside its schema entry.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct PackRecipe {
     pub recipe_id: String,
     #[serde(rename = "type")]
@@ -66,6 +70,9 @@ pub struct PackRecipe {
     pub outputs: Option<RecipeOutputs>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pack: Option<PackConfig>,
+    /// Runner block owned by `magere run-saaq`; parsed so mixed recipes load, never read here.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub saaq: Option<serde_json::Value>,
 }
 
 /// Strict: the schema declares `additionalProperties: false` for this block, and the CLI does
@@ -111,6 +118,12 @@ pub struct PackConfig {
     pub gif_threshold: Option<f32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub use_embedded_baseline: Option<bool>,
+}
+
+/// The dissect manifest that determined the pack's tensor table, kept for lineage.
+struct DissectInput {
+    path: PathBuf,
+    sha256: String,
 }
 
 /// Facts about the pack file on disk, derived by reading it back after the write.
@@ -294,6 +307,16 @@ pub fn run_pack_recipe(
             e
         )
     })?;
+    let dissect_input = DissectInput {
+        sha256: checksum::compute_file_sha256(&dissect_manifest_path).map_err(|e| {
+            format!(
+                "Failed to checksum dissect manifest '{}': {}",
+                dissect_manifest_path.display(),
+                e
+            )
+        })?,
+        path: dissect_manifest_path.clone(),
+    };
     if dissect.ternary_candidates.is_empty() {
         return Err(format!(
             "dissect manifest '{}' lists no ternary_candidates; refusing to write an empty GOZ1 pack",
@@ -326,6 +349,18 @@ pub fn run_pack_recipe(
         )
     })?;
 
+    // The pack and manifest paths are derived from `outputs.manifest_id` alone, so they can
+    // alias a live input (e.g. a source manifest already named `<id>.manifest.json` inside
+    // the chosen output directory would be silently replaced by the emitted one). Resolve
+    // every input and both outputs to canonical paths and refuse before writing anything.
+    reject_aliased_outputs(
+        recipe_path,
+        Path::new(source_manifest_path),
+        &dissect_manifest_path,
+        &pack_path,
+        &manifest_path,
+    )?;
+
     write_pack_durably(&pack_path, &bytes)?;
 
     // --- Verify the file we just wrote round-trips as GOZ1 ------------------------------
@@ -335,8 +370,15 @@ pub fn run_pack_recipe(
         .map_err(|e| format!("Failed to checksum '{}': {}", pack_path.display(), e))?;
 
     // --- Emit the manifest --------------------------------------------------------------
-    let emitted =
-        build_generated_manifest(&recipe, &source, manifest_id, &pack_path, &sha256, stats);
+    let emitted = build_generated_manifest(
+        &recipe,
+        &source,
+        manifest_id,
+        &pack_path,
+        &sha256,
+        stats,
+        &dissect_input,
+    );
     emitted
         .validate()
         .map_err(|e| format!("emitted manifest is invalid: {}", e))?;
@@ -511,6 +553,7 @@ fn build_generated_manifest(
     pack_path: &Path,
     sha256: &str,
     stats: PackStats,
+    dissect_input: &DissectInput,
 ) -> Manifest {
     let now = chrono::Utc::now().to_rfc3339();
 
@@ -563,6 +606,11 @@ fn build_generated_manifest(
                 manifest_id: Some(source.metadata.manifest_id.clone()),
                 path: Some(source.source_artifact.path.clone()),
                 checksum: source.source_artifact.checksum.clone(),
+                dissect_manifest_path: Some(dissect_input.path.display().to_string()),
+                dissect_manifest_checksum: Some(Checksum {
+                    sha256: Some(dissect_input.sha256.clone()),
+                    md5: None,
+                }),
             }),
             tensor_summary: Some(TensorSummary {
                 tensor_count: Some(stats.tensor_count),
@@ -570,18 +618,15 @@ fn build_generated_manifest(
                 ternary_count: Some(stats.ternary_count),
             }),
         }),
+        // Calibration provenance is not inherited from the source manifest: this runner
+        // never loads a calibration dataset, so copying the source's would attribute the
+        // pack to provenance it did not use.
         quantization: Some(Quantization {
             method: Some("ternary".to_string()),
             bits: Some(2),
             group_size: None,
-            calibration_dataset: source
-                .quantization
-                .as_ref()
-                .and_then(|q| q.calibration_dataset.clone()),
-            calibration_config_path: source
-                .quantization
-                .as_ref()
-                .and_then(|q| q.calibration_config_path.clone()),
+            calibration_dataset: None,
+            calibration_config_path: None,
         }),
         backend_compatibility: Some(backends),
         saaq_experiment: None,
@@ -604,6 +649,49 @@ fn input_format_for(source_format: &str) -> Result<InputFormat, String> {
             other
         )),
     }
+}
+
+/// Refuse when a derived output path would overwrite one of the recipe's live inputs.
+///
+/// Both output names derive from `outputs.manifest_id`, so `<id>.manifest.json` in the
+/// chosen output directory can already be the source manifest, the recipe, or the dissect
+/// manifest; writing there would silently destroy the input. Comparison is on canonical
+/// paths so `dir/./f`, symlinks and duplicate separators cannot slip past it.
+fn reject_aliased_outputs(
+    recipe_path: &Path,
+    source_manifest_path: &Path,
+    dissect_manifest_path: &Path,
+    pack_path: &Path,
+    manifest_path: &Path,
+) -> Result<(), String> {
+    let mut inputs = Vec::with_capacity(3);
+    for input in [recipe_path, source_manifest_path, dissect_manifest_path] {
+        inputs.push(
+            std::fs::canonicalize(input)
+                .map_err(|e| format!("Failed to resolve input '{}': {}", input.display(), e))?,
+        );
+    }
+    for output in [pack_path, manifest_path] {
+        // The output may not exist yet; canonicalize its parent (created above) and
+        // reattach the file name.
+        let parent = output
+            .parent()
+            .ok_or_else(|| format!("output path '{}' has no parent", output.display()))?;
+        let canonical_parent = std::fs::canonicalize(parent)
+            .map_err(|e| format!("Failed to resolve output dir '{}': {}", parent.display(), e))?;
+        let file_name = output
+            .file_name()
+            .ok_or_else(|| format!("output path '{}' has no file name", output.display()))?;
+        let resolved = canonical_parent.join(file_name);
+        if let Some(input) = inputs.iter().find(|i| **i == resolved) {
+            return Err(format!(
+                "refusing to run: output '{}' would overwrite recipe input '{}'",
+                output.display(),
+                input.display()
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// Derive a filesystem-safe file stem from a manifest id.
@@ -1270,6 +1358,92 @@ mod tests {
 
         let err = run_pack_recipe(&h.recipe_path, Some(&h.registry_path), None).unwrap_err();
         assert!(err.contains("source_manifests"), "{}", err);
+    }
+
+    /// With `--output-dir` supplied, a recipe that misspells the top-level `outputs` block
+    /// as `output` must fail rather than silently deriving the default manifest id.
+    #[test]
+    fn rejects_an_unknown_top_level_recipe_key() {
+        let dir = TempDir::new().unwrap();
+        let mut recipe = base_recipe(&dir.path().join("packs"));
+        recipe["output"] = recipe["outputs"].take();
+        let h = harness_from(dir, &recipe);
+
+        let err = load_pack_recipe(&h.recipe_path).unwrap_err();
+        assert!(err.contains("output"), "{}", err);
+    }
+
+    /// A recipe that also carries the sibling `saaq` runner block still loads here; the
+    /// block is parsed (so mixed recipes are not rejected) but never read by this runner.
+    #[test]
+    fn a_mixed_pack_and_saaq_recipe_still_loads() {
+        let dir = TempDir::new().unwrap();
+        let mut recipe = base_recipe(&dir.path().join("packs"));
+        recipe["saaq"] = json!({ "snn_steps": 4 });
+        let h = harness_from(dir, &recipe);
+
+        let parsed = load_pack_recipe(&h.recipe_path).expect("mixed recipe loads");
+        assert!(parsed.saaq.is_some());
+    }
+
+    /// `<manifest_id>.manifest.json` in the output directory can already be a live input;
+    /// writing over it would destroy the recipe's own source manifest.
+    #[test]
+    fn refuses_to_overwrite_an_input_aliased_by_an_output_path() {
+        let dir = TempDir::new().unwrap();
+        let output_dir = dir.path().join("packs");
+        fs::create_dir_all(&output_dir).unwrap();
+        let aliased_source = output_dir.join("test-pack-v1.manifest.json");
+        fs::copy(SOURCE_MANIFEST, &aliased_source).unwrap();
+
+        let mut recipe = base_recipe(&output_dir);
+        recipe["inputs"]["source_manifest"] = json!(aliased_source.display().to_string());
+        let h = harness_from(dir, &recipe);
+
+        let err = run_pack_recipe(&h.recipe_path, Some(&h.registry_path), None).unwrap_err();
+        assert!(err.contains("would overwrite recipe input"), "{}", err);
+        assert_eq!(
+            fs::read(&aliased_source).unwrap(),
+            fs::read(SOURCE_MANIFEST).unwrap(),
+            "the aliased input must be left untouched"
+        );
+    }
+
+    /// The dissect manifest — not the recipe or source manifest — determines the emitted
+    /// tensor table, so its identity and checksum belong in the pack's lineage.
+    #[test]
+    fn records_the_dissect_manifest_in_source_lineage() {
+        let h = default_harness();
+        let outcome =
+            run_pack_recipe(&h.recipe_path, Some(&h.registry_path), None).expect("pack run");
+
+        let lineage = outcome
+            .manifest
+            .generated_artifact
+            .as_ref()
+            .unwrap()
+            .source_lineage
+            .as_ref()
+            .unwrap();
+        assert_eq!(
+            lineage.dissect_manifest_path.as_deref(),
+            Some(FIXTURE_DISSECT)
+        );
+        let expected = checksum::compute_file_sha256(Path::new(FIXTURE_DISSECT)).unwrap();
+        assert_eq!(
+            lineage
+                .dissect_manifest_checksum
+                .as_ref()
+                .unwrap()
+                .sha256
+                .as_deref(),
+            Some(expected.as_str())
+        );
+
+        // Calibration provenance belongs to the source run; this runner consumes none of it.
+        let quantization = outcome.manifest.quantization.as_ref().unwrap();
+        assert!(quantization.calibration_dataset.is_none());
+        assert!(quantization.calibration_config_path.is_none());
     }
 
     /// A malformed registry has to fail before the pack and manifest are written, not after:

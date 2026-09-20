@@ -118,6 +118,10 @@ struct RawRecipe {
     outputs: Option<RawOutputs>,
     #[serde(default)]
     saaq: Option<RawSaaq>,
+    /// Runner block owned by `magere pack-goz1`; parsed so mixed recipes load, never read here.
+    #[serde(default)]
+    #[allow(dead_code)]
+    pack: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Default, Deserialize)]

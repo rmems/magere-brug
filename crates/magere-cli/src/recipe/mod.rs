@@ -404,6 +404,14 @@ impl Recipe {
     }
 }
 
+/// Same contract as `magere recipe validate`, for runners that read recipe files directly.
+pub(crate) fn validate_recipe_bytes(path: &Path, contents: &str) -> Result<(), String> {
+    let mut recipe =
+        Recipe::from_json(contents).map_err(|e| format!("Failed to parse recipe: {e}"))?;
+    recipe.source_path = Some(path.to_path_buf());
+    recipe.validate()
+}
+
 /// Dispatch for `magere recipe <...>`.
 pub fn run(command: RecipeCommands) -> Result<String, String> {
     match command {

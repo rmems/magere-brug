@@ -7,7 +7,6 @@
     "goz1_ref": "manifests/examples/goz1-pack-example.json"
   },
   "outputs": {
-    "manifest_id": "olmoe-saaq-example-v1",
     "output_dir": "artifacts/saaq/olmoe-saaq-example"
   },
   "handoff": {

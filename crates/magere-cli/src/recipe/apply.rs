@@ -70,13 +70,19 @@ impl Recipe {
 
         let file_name = emit_file_name(&source.manifest.metadata.manifest_id)?;
         let emitted_manifest = manifests_dir.join(&file_name);
+        let emitted_handoff = handoff_dir.join(&file_name);
+        reject_registration_path_collisions(
+            registry_path,
+            &source.path,
+            &emitted_manifest,
+            &emitted_handoff,
+        )?;
         write_emitted_manifest(&source.path, &source.bytes, &emitted_manifest)?;
 
-        let emitted_handoff = handoff_dir.join(&file_name);
         let payload = combine_handoff_payload(self, &source.manifest, &emitted_manifest);
         let serialized = serde_json::to_string_pretty(&payload)
             .map_err(|e| format!("failed to serialize combine-for-AI handoff: {e}"))?;
-        std::fs::write(&emitted_handoff, serialized).map_err(|e| {
+        write_regular_file(&emitted_handoff, serialized.as_bytes()).map_err(|e| {
             format!(
                 "failed to write combine-for-AI handoff {}: {e}",
                 emitted_handoff.display()
@@ -286,8 +292,84 @@ fn create_dir(path: &Path, kind: &str) -> Result<(), String> {
         .map_err(|e| format!("failed to create {kind} directory {}: {e}", path.display()))
 }
 
+fn reject_registration_path_collisions(
+    registry_path: &Path,
+    source_manifest: &Path,
+    emitted_manifest: &Path,
+    emitted_handoff: &Path,
+) -> Result<(), String> {
+    let paths = [
+        ("registry", registry_path),
+        ("source manifest", source_manifest),
+        ("emitted manifest", emitted_manifest),
+        ("combine-for-AI handoff", emitted_handoff),
+    ];
+    let mut canonical: Vec<(String, PathBuf)> = Vec::new();
+    for (label, path) in paths {
+        let resolved = canonicalize_registration_path(path, label)?;
+        for (other_label, other) in &canonical {
+            if *other == resolved {
+                if paths_alias_in_place_emit(label, other_label) {
+                    continue;
+                }
+                return Err(format!(
+                    "registration paths must not alias the same file: {label} '{}' and {other_label} '{}'",
+                    path.display(),
+                    other.display()
+                ));
+            }
+        }
+        canonical.push((label.to_string(), resolved));
+    }
+    Ok(())
+}
+
+fn paths_alias_in_place_emit(left: &str, right: &str) -> bool {
+    matches!(
+        (left, right),
+        ("source manifest", "emitted manifest") | ("emitted manifest", "source manifest")
+    )
+}
+
+fn canonicalize_registration_path(path: &Path, label: &str) -> Result<PathBuf, String> {
+    if path.exists() {
+        return path
+            .canonicalize()
+            .map_err(|e| format!("failed to resolve {label} path '{}': {e}", path.display()));
+    }
+    let file_name = path
+        .file_name()
+        .ok_or_else(|| format!("{label} path '{}' must name a file", path.display()))?;
+    let parent = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    let parent = parent.canonicalize().map_err(|e| {
+        format!(
+            "failed to resolve {label} directory '{}': {e}",
+            parent.display()
+        )
+    })?;
+    Ok(parent.join(file_name))
+}
+
+fn write_regular_file(path: &Path, contents: &[u8]) -> Result<(), String> {
+    if path.exists()
+        && std::fs::symlink_metadata(path)
+            .map_err(|e| format!("failed to inspect {}: {e}", path.display()))?
+            .file_type()
+            .is_symlink()
+    {
+        return Err(format!(
+            "refusing to overwrite symlink at {}",
+            path.display()
+        ));
+    }
+    std::fs::write(path, contents).map_err(|e| format!("failed to write {}: {e}", path.display()))
+}
+
 fn combine_handoff_payload(recipe: &Recipe, manifest: &Manifest, emitted_manifest: &Path) -> Value {
-    let status = benchmark_linkage_status(recipe);
+    let status = benchmark_linkage_status(recipe, manifest);
     let mut payload = json!({
         "schema": "magere-brug/combine-for-ai-handoff/1",
         "recipe_id": recipe.recipe_id,
@@ -313,15 +395,19 @@ fn combine_handoff_payload(recipe: &Recipe, manifest: &Manifest, emitted_manifes
     payload
 }
 
-fn benchmark_linkage_status(recipe: &Recipe) -> String {
-    match recipe
+fn benchmark_linkage_status(recipe: &Recipe, manifest: &Manifest) -> String {
+    if let Some(target) = recipe
         .handoff
         .as_ref()
         .and_then(|handoff| handoff.combine_for_ai.as_ref())
     {
-        Some(target) => target.effective_status().to_string(),
-        None => "ready".to_string(),
+        return target.effective_status().to_string();
     }
+    manifest
+        .benchmark_linkage
+        .as_ref()
+        .and_then(|linkage| linkage.status.clone())
+        .unwrap_or_else(|| "pending".to_string())
 }
 
 fn handoff_pipeline_id(recipe: &Recipe, manifest: &Manifest) -> Option<String> {

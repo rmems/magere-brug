@@ -86,6 +86,25 @@ impl Recipe {
                     "saaq recipes do not produce outputs.artifact_path; omit it".to_string()
                 );
             }
+            if outputs.generated_format.is_some() {
+                return Err(
+                    "saaq recipes do not produce outputs.generated_format; omit it".to_string(),
+                );
+            }
+            if outputs.manifest_id.is_some() {
+                return Err("saaq recipes do not produce outputs.manifest_id; omit it".to_string());
+            }
+            if outputs.goz1_version.is_some() {
+                return Err("saaq recipes do not consume outputs.goz1_version; omit it".to_string());
+            }
+            if outputs.checksum_algorithm.is_some() {
+                return Err(
+                    "saaq recipes do not consume outputs.checksum_algorithm; omit it".to_string(),
+                );
+            }
+            if outputs.lineage.is_some() {
+                return Err("saaq recipes do not consume outputs.lineage; omit it".to_string());
+            }
         }
         Ok(())
     }
@@ -383,7 +402,16 @@ impl Recipe {
             return Ok(());
         };
         match manifest.generated_artifact.as_ref() {
-            Some(generated) if generated.format == "goz1" => Ok(()),
+            Some(generated) if generated.format == "goz1" => match generated.status.as_deref() {
+                Some("success") => Ok(()),
+                Some(status) => Err(format!(
+                    "inputs.goz1_ref must point at a successful goz1 artifact (status '{status}')"
+                )),
+                None => Err(
+                    "inputs.goz1_ref must point at a goz1 artifact whose generated_artifact.status is 'success'"
+                        .to_string(),
+                ),
+            },
             Some(generated) => Err(format!(
                 "inputs.goz1_ref must point at a manifest whose generated_artifact.format \
                  is 'goz1' (got '{}')",

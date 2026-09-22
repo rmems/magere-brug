@@ -71,7 +71,7 @@ fn test_apply_register_writes_registry() {
     let handoff: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&emitted_handoff).unwrap()).unwrap();
     assert_eq!(handoff["model_slug"], "sample_model");
-    assert_eq!(handoff["benchmark_linkage"]["status"], "ready");
+    assert_eq!(handoff["benchmark_linkage"]["status"], "pending");
     assert_eq!(handoff["schema"], "magere-brug/combine-for-ai-handoff/1");
 }
 

@@ -59,12 +59,18 @@ impl ArtifactRegistry {
         manifest.validate()?;
 
         let replaced = self.models.contains_key(&manifest.model.slug);
+        let registered_at = self
+            .models
+            .get(&manifest.model.slug)
+            .filter(|entry| entry.manifest_id == manifest.metadata.manifest_id)
+            .map(|entry| entry.registered_at.clone())
+            .unwrap_or_else(|| chrono::Utc::now().to_rfc3339());
         let entry = RegistryEntry {
             slug: manifest.model.slug.clone(),
             manifest_id: manifest.metadata.manifest_id.clone(),
             family: manifest.model.family.clone(),
             status: "registered".to_string(),
-            registered_at: chrono::Utc::now().to_rfc3339(),
+            registered_at,
             notes: manifest.metadata.description.clone(),
         };
 
@@ -203,11 +209,17 @@ mod tests {
         let manifest = create_test_manifest();
 
         assert!(!registry.register_or_update(&manifest).unwrap());
+        let first_registered_at = registry.lookup("test_model").unwrap().registered_at.clone();
         assert!(registry.register_or_update(&manifest).unwrap());
         assert_eq!(registry.count(), 1);
         assert_eq!(
             registry.lookup("test_model").unwrap().manifest_id,
             "test-model-v1"
+        );
+        assert_eq!(
+            registry.lookup("test_model").unwrap().registered_at,
+            first_registered_at,
+            "idempotent replay must preserve registered_at"
         );
     }
 }

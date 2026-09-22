@@ -346,6 +346,38 @@ fn format_saaq_report(config: &SaaqRunConfig, report: SaaqRunReport) -> String {
     )
 }
 
+/// When `--output-dir` supplies the only output path, merge it into a copy for validation.
+fn saaq_validation_recipe_text(
+    contents: &str,
+    output_dir_override: Option<&Path>,
+) -> Result<String, String> {
+    let Some(output_dir) = output_dir_override else {
+        return Ok(contents.to_string());
+    };
+    let mut value: serde_json::Value = serde_json::from_str(contents)
+        .map_err(|e| format!("Failed to parse recipe for validation: {e}"))?;
+    let outputs = value
+        .as_object_mut()
+        .and_then(|object| object.get_mut("outputs"))
+        .and_then(|outputs| outputs.as_object_mut());
+    match outputs {
+        Some(outputs) if outputs.contains_key("output_dir") => {}
+        Some(outputs) => {
+            outputs.insert(
+                "output_dir".to_string(),
+                serde_json::Value::String(output_dir.to_string_lossy().into_owned()),
+            );
+        }
+        None => {
+            value["outputs"] = serde_json::json!({
+                "output_dir": output_dir.to_string_lossy(),
+            });
+        }
+    }
+    serde_json::to_string(&value)
+        .map_err(|e| format!("Failed to serialize recipe for validation: {e}"))
+}
+
 /// Reject SAAQ fields the runner does not consume, and enforce source-format assertions.
 pub(crate) fn validate_saaq_recipe_invariants(
     contents: &str,
@@ -375,6 +407,32 @@ fn reject_unconsumed_saaq_fields(value: &serde_json::Value) -> Result<(), String
     }
     if value.pointer("/outputs/artifact_path").is_some() {
         return Err("saaq recipes do not produce outputs.artifact_path; omit it".to_string());
+    }
+    for (pointer, message) in [
+        (
+            "/outputs/generated_format",
+            "saaq recipes do not produce outputs.generated_format; omit it",
+        ),
+        (
+            "/outputs/manifest_id",
+            "saaq recipes do not produce outputs.manifest_id; omit it",
+        ),
+        (
+            "/outputs/goz1_version",
+            "saaq recipes do not consume outputs.goz1_version; omit it",
+        ),
+        (
+            "/outputs/checksum_algorithm",
+            "saaq recipes do not consume outputs.checksum_algorithm; omit it",
+        ),
+        (
+            "/outputs/lineage",
+            "saaq recipes do not consume outputs.lineage; omit it",
+        ),
+    ] {
+        if value.pointer(pointer).is_some() {
+            return Err(message.to_string());
+        }
     }
     Ok(())
 }
@@ -429,6 +487,8 @@ impl SaaqRunConfig {
     pub fn load(recipe_path: &Path, output_dir_override: Option<&Path>) -> Result<Self, String> {
         let contents = std::fs::read_to_string(recipe_path)
             .map_err(|e| format!("Failed to read recipe '{}': {}", recipe_path.display(), e))?;
+        let validation_contents = saaq_validation_recipe_text(&contents, output_dir_override)?;
+        crate::recipe::validate_recipe_bytes(recipe_path, &validation_contents)?;
         let config = Self::from_json(&contents, recipe_path, output_dir_override)?;
         validate_saaq_recipe_invariants(&contents, &config)?;
         Ok(config)
@@ -1549,6 +1609,8 @@ mod tests {
 
     const CSV_HEADER: &str = "timestamp_ms,avg_pop_firing_rate_hz,membrane_dv_dt,routing_entropy,saaq_delta_q_prev,saaq_delta_q_target,gpu_temp_c,gpu_power_w,cpu_tctl_c,cpu_package_power_w,saaq_delta_q_legacy_prev,saaq_delta_q_legacy_target,saaq_delta_q_v15_prev,saaq_delta_q_v15_target";
 
+    const EXAMPLE_MANIFEST_REF: &str = "manifests/examples/olmoe-1b-7b-instruct.json";
+
     fn repo_root() -> PathBuf {
         // crates/magere-cli -> crates -> <repo root>
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -1595,7 +1657,7 @@ mod tests {
     }}{extra}
   }}
 }}"#,
-            manifest = json_path(&example_manifest()),
+            manifest = "manifests/examples/olmoe-1b-7b-instruct.json",
         )
     }
 
@@ -1843,7 +1905,7 @@ mod tests {
     fn rejects_input_ref_that_does_not_resolve() {
         let out = TempDir::new().unwrap();
         let json = recipe_json(2, "").replace(
-            &json_path(&example_manifest()),
+            &EXAMPLE_MANIFEST_REF,
             "manifests/examples/does-not-exist.json",
         );
         let error = config_from(&json, out.path()).unwrap_err();
@@ -1881,7 +1943,7 @@ mod tests {
         let json = recipe_json(2, "").replace(
             &format!(
                 "\"inputs\": {{ \"source_manifest\": \"{}\" }},",
-                json_path(&example_manifest())
+                EXAMPLE_MANIFEST_REF
             ),
             "",
         );
@@ -1976,7 +2038,7 @@ mod tests {
         let original = std::fs::read_to_string(example_manifest()).unwrap();
         std::fs::write(&manifest_path, &original).unwrap();
         let json = recipe_json(2, "")
-            .replace(&json_path(&example_manifest()), &json_path(&manifest_path))
+            .replace(&EXAMPLE_MANIFEST_REF, &json_path(&manifest_path))
             .replace(
                 "\"inputs\": { \"source_manifest\":",
                 "\"inputs\": { \"source_format\": \"gguf\", \"source_manifest\":",
@@ -2041,7 +2103,7 @@ mod tests {
         let out = TempDir::new().unwrap();
         // An unbounded ancestor walk used to resolve this to /etc/hostname and
         // record a system file as the run's provenance.
-        let json = recipe_json(2, "").replace(&json_path(&example_manifest()), "etc/hostname");
+        let json = recipe_json(2, "").replace(&EXAMPLE_MANIFEST_REF, "etc/hostname");
         let error = config_from(&json, out.path()).unwrap_err();
         assert!(
             error.contains("source_manifest"),
@@ -2053,7 +2115,7 @@ mod tests {
     fn input_refs_reject_parent_directory_segments() {
         let out = TempDir::new().unwrap();
         let json =
-            recipe_json(2, "").replace(&json_path(&example_manifest()), "../../../../etc/hostname");
+            recipe_json(2, "").replace(&EXAMPLE_MANIFEST_REF, "../../../../etc/hostname");
         let error = config_from(&json, out.path()).unwrap_err();
         assert!(
             error.contains("must not contain '..'"),
@@ -2073,7 +2135,7 @@ mod tests {
         std::fs::write(&outside_manifest, "outside").unwrap();
         symlink(&outside_manifest, tree.path().join("escape.json")).unwrap();
 
-        let json = recipe_json(2, "").replace(&json_path(&example_manifest()), "escape.json");
+        let json = recipe_json(2, "").replace(&EXAMPLE_MANIFEST_REF, "escape.json");
         let error =
             SaaqRunConfig::from_json(&json, &tree.path().join("recipe.json"), Some(tree.path()))
                 .unwrap_err();
@@ -2087,7 +2149,7 @@ mod tests {
     fn nested_crate_recipes_resolve_refs_from_the_workspace_root() {
         let out = TempDir::new().unwrap();
         let json = recipe_json(2, "").replace(
-            &json_path(&example_manifest()),
+            &EXAMPLE_MANIFEST_REF,
             "manifests/examples/olmoe-1b-7b-instruct.json",
         );
         let nested_recipe = repo_root().join("crates/magere-cli/configs/nested-recipe.json");
@@ -2147,7 +2209,7 @@ mod tests {
 
         let out = TempDir::new().unwrap();
         let json = recipe_json(2, "").replace(
-            &json_path(&example_manifest()),
+            &EXAMPLE_MANIFEST_REF,
             &json_path(&source_manifest),
         );
         let config = config_from(&json, out.path()).unwrap();
@@ -2169,7 +2231,7 @@ mod tests {
 
     #[test]
     fn run_manifest_pins_the_recipe_bytes_that_were_parsed() {
-        let recipe_dir = TempDir::new().unwrap();
+        let recipe_dir = TempDir::new_in(repo_root()).unwrap();
         let recipe_path = recipe_dir.path().join("recipe.json");
         let validated_recipe = recipe_json(2, "");
         std::fs::write(&recipe_path, &validated_recipe).unwrap();
@@ -2241,7 +2303,7 @@ mod tests {
     "telemetry": {{ "source": "csv", "path": "{telemetry}" }}
   }}
 }}"#,
-            manifest = json_path(&example_manifest()),
+            manifest = EXAMPLE_MANIFEST_REF,
             telemetry = json_path(telemetry_path),
         )
     }
@@ -2534,7 +2596,7 @@ mod tests {
 
     #[test]
     fn refuses_to_replace_recipe_named_like_the_run_manifest() {
-        let out = TempDir::new().unwrap();
+        let out = TempDir::new_in(repo_root()).unwrap();
         let recipe_path = out.path().join(RUN_MANIFEST_FILE);
         let recipe = recipe_json(2, "");
         std::fs::write(&recipe_path, &recipe).unwrap();
@@ -2560,7 +2622,7 @@ mod tests {
 
             let json = recipe_json(2, "")
                 .replace("source_manifest", field)
-                .replace(&json_path(&example_manifest()), &json_path(&input_path));
+                .replace(&EXAMPLE_MANIFEST_REF, &json_path(&input_path));
             let error = config_from(&json, out.path())
                 .and_then(|config| execute(&config).map(|_| ()))
                 .unwrap_err();

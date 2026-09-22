@@ -70,41 +70,7 @@ impl Recipe {
             );
         }
         if let Some(outputs) = &self.outputs {
-            if outputs.register == Some(true) {
-                return Err(
-                    "saaq recipes do not register artifacts; omit outputs.register or use type 'register'"
-                        .to_string(),
-                );
-            }
-            if outputs.registry_path.is_some() {
-                return Err(
-                    "saaq recipes do not write a registry; omit outputs.registry_path".to_string(),
-                );
-            }
-            if outputs.artifact_path.is_some() {
-                return Err(
-                    "saaq recipes do not produce outputs.artifact_path; omit it".to_string()
-                );
-            }
-            if outputs.generated_format.is_some() {
-                return Err(
-                    "saaq recipes do not produce outputs.generated_format; omit it".to_string(),
-                );
-            }
-            if outputs.manifest_id.is_some() {
-                return Err("saaq recipes do not produce outputs.manifest_id; omit it".to_string());
-            }
-            if outputs.goz1_version.is_some() {
-                return Err("saaq recipes do not consume outputs.goz1_version; omit it".to_string());
-            }
-            if outputs.checksum_algorithm.is_some() {
-                return Err(
-                    "saaq recipes do not consume outputs.checksum_algorithm; omit it".to_string(),
-                );
-            }
-            if outputs.lineage.is_some() {
-                return Err("saaq recipes do not consume outputs.lineage; omit it".to_string());
-            }
+            reject_disallowed_saaq_outputs(outputs)?;
         }
         Ok(())
     }
@@ -422,5 +388,50 @@ impl Recipe {
                     .to_string(),
             ),
         }
+    }
+}
+
+fn reject_disallowed_saaq_outputs(outputs: &RecipeOutputs) -> Result<(), String> {
+    if outputs.register == Some(true) {
+        return Err(
+            "saaq recipes do not register artifacts; omit outputs.register or use type 'register'"
+                .to_string(),
+        );
+    }
+    reject_if_set(
+        outputs.registry_path.is_some(),
+        "saaq recipes do not write a registry; omit outputs.registry_path",
+    )?;
+    reject_if_set(
+        outputs.artifact_path.is_some(),
+        "saaq recipes do not produce outputs.artifact_path; omit it",
+    )?;
+    reject_if_set(
+        outputs.generated_format.is_some(),
+        "saaq recipes do not produce outputs.generated_format; omit it",
+    )?;
+    reject_if_set(
+        outputs.manifest_id.is_some(),
+        "saaq recipes do not produce outputs.manifest_id; omit it",
+    )?;
+    reject_if_set(
+        outputs.goz1_version.is_some(),
+        "saaq recipes do not consume outputs.goz1_version; omit it",
+    )?;
+    reject_if_set(
+        outputs.checksum_algorithm.is_some(),
+        "saaq recipes do not consume outputs.checksum_algorithm; omit it",
+    )?;
+    reject_if_set(
+        outputs.lineage.is_some(),
+        "saaq recipes do not consume outputs.lineage; omit it",
+    )
+}
+
+fn reject_if_set(present: bool, message: &str) -> Result<(), String> {
+    if present {
+        Err(message.to_string())
+    } else {
+        Ok(())
     }
 }

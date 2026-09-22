@@ -1905,7 +1905,7 @@ mod tests {
     fn rejects_input_ref_that_does_not_resolve() {
         let out = TempDir::new().unwrap();
         let json = recipe_json(2, "").replace(
-            &EXAMPLE_MANIFEST_REF,
+            EXAMPLE_MANIFEST_REF,
             "manifests/examples/does-not-exist.json",
         );
         let error = config_from(&json, out.path()).unwrap_err();
@@ -2038,7 +2038,7 @@ mod tests {
         let original = std::fs::read_to_string(example_manifest()).unwrap();
         std::fs::write(&manifest_path, &original).unwrap();
         let json = recipe_json(2, "")
-            .replace(&EXAMPLE_MANIFEST_REF, &json_path(&manifest_path))
+            .replace(EXAMPLE_MANIFEST_REF, &json_path(&manifest_path))
             .replace(
                 "\"inputs\": { \"source_manifest\":",
                 "\"inputs\": { \"source_format\": \"gguf\", \"source_manifest\":",
@@ -2103,7 +2103,7 @@ mod tests {
         let out = TempDir::new().unwrap();
         // An unbounded ancestor walk used to resolve this to /etc/hostname and
         // record a system file as the run's provenance.
-        let json = recipe_json(2, "").replace(&EXAMPLE_MANIFEST_REF, "etc/hostname");
+        let json = recipe_json(2, "").replace(EXAMPLE_MANIFEST_REF, "etc/hostname");
         let error = config_from(&json, out.path()).unwrap_err();
         assert!(
             error.contains("source_manifest"),
@@ -2114,8 +2114,7 @@ mod tests {
     #[test]
     fn input_refs_reject_parent_directory_segments() {
         let out = TempDir::new().unwrap();
-        let json =
-            recipe_json(2, "").replace(&EXAMPLE_MANIFEST_REF, "../../../../etc/hostname");
+        let json = recipe_json(2, "").replace(EXAMPLE_MANIFEST_REF, "../../../../etc/hostname");
         let error = config_from(&json, out.path()).unwrap_err();
         assert!(
             error.contains("must not contain '..'"),
@@ -2135,7 +2134,7 @@ mod tests {
         std::fs::write(&outside_manifest, "outside").unwrap();
         symlink(&outside_manifest, tree.path().join("escape.json")).unwrap();
 
-        let json = recipe_json(2, "").replace(&EXAMPLE_MANIFEST_REF, "escape.json");
+        let json = recipe_json(2, "").replace(EXAMPLE_MANIFEST_REF, "escape.json");
         let error =
             SaaqRunConfig::from_json(&json, &tree.path().join("recipe.json"), Some(tree.path()))
                 .unwrap_err();
@@ -2149,7 +2148,7 @@ mod tests {
     fn nested_crate_recipes_resolve_refs_from_the_workspace_root() {
         let out = TempDir::new().unwrap();
         let json = recipe_json(2, "").replace(
-            &EXAMPLE_MANIFEST_REF,
+            EXAMPLE_MANIFEST_REF,
             "manifests/examples/olmoe-1b-7b-instruct.json",
         );
         let nested_recipe = repo_root().join("crates/magere-cli/configs/nested-recipe.json");
@@ -2208,10 +2207,7 @@ mod tests {
         std::fs::write(&source_manifest, validated_bytes).unwrap();
 
         let out = TempDir::new().unwrap();
-        let json = recipe_json(2, "").replace(
-            &EXAMPLE_MANIFEST_REF,
-            &json_path(&source_manifest),
-        );
+        let json = recipe_json(2, "").replace(EXAMPLE_MANIFEST_REF, &json_path(&source_manifest));
         let config = config_from(&json, out.path()).unwrap();
         let validated_sha256 = checksum::compute_string_sha256(validated_bytes);
 
@@ -2622,7 +2618,7 @@ mod tests {
 
             let json = recipe_json(2, "")
                 .replace("source_manifest", field)
-                .replace(&EXAMPLE_MANIFEST_REF, &json_path(&input_path));
+                .replace(EXAMPLE_MANIFEST_REF, &json_path(&input_path));
             let error = config_from(&json, out.path())
                 .and_then(|config| execute(&config).map(|_| ()))
                 .unwrap_err();

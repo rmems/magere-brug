@@ -102,6 +102,32 @@ fn prepare_pack_run(
     registry_path: Option<&Path>,
     output_dir_override: Option<&Path>,
 ) -> Result<PreparedPack, String> {
+    let (recipe, pack_config, registry_file, lock, registry) =
+        load_recipe_and_registry(recipe_path, registry_path)?;
+    bind_inputs_and_outputs(
+        recipe_path,
+        recipe,
+        pack_config,
+        registry_file,
+        lock,
+        registry,
+        output_dir_override,
+    )
+}
+
+fn load_recipe_and_registry(
+    recipe_path: &Path,
+    registry_path: Option<&Path>,
+) -> Result<
+    (
+        PackRecipe,
+        recipe::PackConfig,
+        PathBuf,
+        RegistryLock,
+        ArtifactRegistry,
+    ),
+    String,
+> {
     let recipe = load_pack_recipe(recipe_path)?;
     let pack_config = require_pack_config(&recipe)?.clone();
     let registry_file = registry_path
@@ -109,6 +135,18 @@ fn prepare_pack_run(
         .to_path_buf();
     let lock = RegistryLock::acquire(&registry_file)?;
     let registry = load_registry(&registry_file)?;
+    Ok((recipe, pack_config, registry_file, lock, registry))
+}
+
+fn bind_inputs_and_outputs(
+    recipe_path: &Path,
+    recipe: PackRecipe,
+    pack_config: recipe::PackConfig,
+    registry_file: PathBuf,
+    lock: RegistryLock,
+    registry: ArtifactRegistry,
+    output_dir_override: Option<&Path>,
+) -> Result<PreparedPack, String> {
     let (source_path, source) = resolve_source_manifest(&recipe, &registry)?;
     let layout = resolve_output_layout(&recipe, &source, output_dir_override)?;
     let (quantize_config, input_dir) = quantize_config_from(&pack_config, &source, &layout)?;
@@ -118,20 +156,12 @@ fn prepare_pack_run(
         &dissect,
         pack_config.allow_model_mismatch.unwrap_or(false),
     )?;
-    std::fs::create_dir_all(&layout.output_dir).map_err(|e| {
-        format!(
-            "Failed to create output dir '{}': {}",
-            layout.output_dir.display(),
-            e
-        )
-    })?;
-    reject_aliased_outputs(
+    create_outputs_if_safe(
         recipe_path,
         &source_path,
-        &dissect_input.path,
         &registry_file,
-        &layout.pack_path,
-        &layout.manifest_path,
+        &layout,
+        &dissect_input,
     )?;
     Ok(PreparedPack {
         recipe,
@@ -145,6 +175,30 @@ fn prepare_pack_run(
         dissect,
         dissect_input,
     })
+}
+
+fn create_outputs_if_safe(
+    recipe_path: &Path,
+    source_path: &Path,
+    registry_file: &Path,
+    layout: &OutputLayout,
+    dissect_input: &DissectInput,
+) -> Result<(), String> {
+    std::fs::create_dir_all(&layout.output_dir).map_err(|e| {
+        format!(
+            "Failed to create output dir '{}': {}",
+            layout.output_dir.display(),
+            e
+        )
+    })?;
+    reject_aliased_outputs(
+        recipe_path,
+        source_path,
+        &dissect_input.path,
+        registry_file,
+        &layout.pack_path,
+        &layout.manifest_path,
+    )
 }
 
 fn execute_pack_run(prepared: PreparedPack) -> Result<PackOutcome, String> {

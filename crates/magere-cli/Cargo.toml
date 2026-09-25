@@ -23,6 +23,7 @@ chrono = { version = "0.4", features = ["serde"] }
 magere-grok-process = { path = "../magere-grok-process" }
 magere-corinth-core = { path = "../magere-corinth-core" }
 csv = "1.4.0"
+fs4 = "1.1.0"
 
 [dev-dependencies]
 tempfile = "3.8.1"

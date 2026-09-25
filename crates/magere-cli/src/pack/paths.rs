@@ -2,6 +2,7 @@
 
 use crate::manifest::Manifest;
 use crate::registry::ArtifactRegistry;
+use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
 /// Derived pack and manifest destinations for one run.
@@ -164,12 +165,21 @@ fn resolve_planned(path: &Path) -> Result<PathBuf, String> {
     if path.exists() {
         return canonicalize_existing(path, "path");
     }
+    let (parent, file_name) = split_planned(path)?;
+    resolve_under_parent(path, parent, file_name)
+}
+
+fn split_planned(path: &Path) -> Result<(&Path, &OsStr), String> {
     let parent = path
         .parent()
         .ok_or_else(|| format!("output path '{}' has no parent", path.display()))?;
     let file_name = path
         .file_name()
         .ok_or_else(|| format!("output path '{}' has no file name", path.display()))?;
+    Ok((parent, file_name))
+}
+
+fn resolve_under_parent(path: &Path, parent: &Path, file_name: &OsStr) -> Result<PathBuf, String> {
     if parent.as_os_str().is_empty() {
         let cwd = std::env::current_dir()
             .map_err(|e| format!("Failed to resolve current directory: {e}"))?;

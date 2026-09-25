@@ -18,6 +18,7 @@
 //! AWQ and GPTQ are removed comparison paths and are rejected by the schema.
 
 mod apply;
+mod apply_emit;
 mod resolve;
 mod summary;
 mod validate;

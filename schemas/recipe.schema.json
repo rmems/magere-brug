@@ -104,6 +104,11 @@
           "type": "boolean",
           "default": false,
           "description": "INERT while the packer is a skeleton: magere-grok-process::stream::run_quantize takes its QuantizeConfig as `_config` and discards it, so this field is validated and recorded but does not affect the emitted bytes. Only `dissect_manifest` does. Becomes live when real tensor loading lands. Use the packer's embedded baseline statistics instead of deriving them from input_dir."
+        },
+        "allow_model_mismatch": {
+          "type": "boolean",
+          "default": false,
+          "description": "When true, skip the check that the source manifest and dissect manifest name the same model family. Default is to refuse a pack whose tensor table comes from a different family than the recorded model identity."
         }
       },
       "additionalProperties": false

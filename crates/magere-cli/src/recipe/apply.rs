@@ -62,11 +62,9 @@ impl Recipe {
         source: &RegisterSource,
         registry_path: &Path,
     ) -> Result<(PathBuf, PathBuf), String> {
-        let base = emit_base_dir(self, registry_path);
+        let base = prepare_emit_tree(&emit_base_dir(self, registry_path))?;
         let manifests_dir = base.join("manifests");
         let handoff_dir = base.join("handoff");
-        create_dir(&manifests_dir, "manifest")?;
-        create_dir(&handoff_dir, "handoff")?;
 
         let file_name = emit_file_name(&source.manifest.metadata.manifest_id)?;
         let emitted_manifest = manifests_dir.join(&file_name);
@@ -77,17 +75,18 @@ impl Recipe {
             &emitted_manifest,
             &emitted_handoff,
         )?;
-        write_emitted_manifest(&source.path, &source.bytes, &emitted_manifest)?;
+        write_emitted_manifest(&base, &source.path, &source.bytes, &emitted_manifest)?;
 
         let payload = combine_handoff_payload(self, &source.manifest, &emitted_manifest);
         let serialized = serde_json::to_string_pretty(&payload)
             .map_err(|e| format!("failed to serialize combine-for-AI handoff: {e}"))?;
-        write_regular_file(&emitted_handoff, serialized.as_bytes()).map_err(|e| {
-            format!(
-                "failed to write combine-for-AI handoff {}: {e}",
-                emitted_handoff.display()
-            )
-        })?;
+        write_regular_file_under_base(&base, &emitted_handoff, serialized.as_bytes(), "handoff")
+            .map_err(|e| {
+                format!(
+                    "failed to write combine-for-AI handoff {}: {e}",
+                    emitted_handoff.display()
+                )
+            })?;
         Ok((emitted_manifest, emitted_handoff))
     }
 }
@@ -176,11 +175,16 @@ fn emit_file_name(manifest_id: &str) -> Result<String, String> {
     }
 }
 
-fn write_emitted_manifest(source_path: &Path, bytes: &[u8], dest: &Path) -> Result<(), String> {
+fn write_emitted_manifest(
+    output_base: &Path,
+    source_path: &Path,
+    bytes: &[u8],
+    dest: &Path,
+) -> Result<(), String> {
     if same_existing_file(source_path, dest) {
         return Ok(());
     }
-    std::fs::write(dest, bytes)
+    write_regular_file_under_base(output_base, dest, bytes, "emitted manifest")
         .map_err(|e| format!("failed to emit artifact manifest {}: {e}", dest.display()))
 }
 
@@ -287,9 +291,108 @@ fn emit_base_dir(recipe: &Recipe, registry_path: &Path) -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("."))
 }
 
-fn create_dir(path: &Path, kind: &str) -> Result<(), String> {
-    std::fs::create_dir_all(path)
-        .map_err(|e| format!("failed to create {kind} directory {}: {e}", path.display()))
+fn prepare_emit_tree(base: &Path) -> Result<PathBuf, String> {
+    reject_symlink_components(base, "output base")?;
+    std::fs::create_dir_all(base).map_err(|e| {
+        format!(
+            "failed to create output base directory {}: {e}",
+            base.display()
+        )
+    })?;
+    reject_symlink_components(base, "output base")?;
+    let canonical_base = base
+        .canonicalize()
+        .map_err(|e| format!("failed to resolve output base {}: {e}", base.display()))?;
+    for subdir in ["manifests", "handoff"] {
+        let dir = canonical_base.join(subdir);
+        reject_symlink_components(&dir, subdir)?;
+        std::fs::create_dir_all(&dir)
+            .map_err(|e| format!("failed to create {subdir} directory {}: {e}", dir.display()))?;
+        reject_symlink_components(&dir, subdir)?;
+    }
+    Ok(canonical_base)
+}
+
+fn reject_symlink_components(path: &Path, label: &str) -> Result<(), String> {
+    let mut prefix = PathBuf::new();
+    for component in path.components() {
+        prefix.push(component);
+        if prefix.as_os_str().is_empty() {
+            continue;
+        }
+        if !prefix.exists() {
+            break;
+        }
+        let metadata = std::fs::symlink_metadata(&prefix).map_err(|e| {
+            format!(
+                "failed to inspect {label} path component {}: {e}",
+                prefix.display()
+            )
+        })?;
+        if metadata.file_type().is_symlink() {
+            return Err(format!(
+                "refusing symlink in {label} path at {}",
+                prefix.display()
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn write_regular_file_under_base(
+    output_base: &Path,
+    path: &Path,
+    contents: &[u8],
+    label: &str,
+) -> Result<(), String> {
+    reject_symlink_components(path, label)?;
+    ensure_path_under_base(output_base, path, label)?;
+    write_regular_file(path, contents)
+}
+
+fn ensure_path_under_base(output_base: &Path, path: &Path, label: &str) -> Result<(), String> {
+    let Some(parent) = path.parent() else {
+        return Err(format!(
+            "{label} path '{}' must include a parent directory",
+            path.display()
+        ));
+    };
+    let parent = parent.canonicalize().map_err(|e| {
+        format!(
+            "failed to resolve {label} directory '{}': {e}",
+            parent.display()
+        )
+    })?;
+    let base = output_base.canonicalize().map_err(|e| {
+        format!(
+            "failed to resolve output base '{}': {e}",
+            output_base.display()
+        )
+    })?;
+    if parent == base || parent.starts_with(&base) {
+        Ok(())
+    } else {
+        Err(format!(
+            "{label} path '{}' escapes the selected output base '{}'",
+            path.display(),
+            base.display()
+        ))
+    }
+}
+
+fn write_regular_file(path: &Path, contents: &[u8]) -> Result<(), String> {
+    if path.exists()
+        && std::fs::symlink_metadata(path)
+            .map_err(|e| format!("failed to inspect {}: {e}", path.display()))?
+            .file_type()
+            .is_symlink()
+    {
+        return Err(format!(
+            "refusing to overwrite symlink at {}",
+            path.display()
+        ));
+    }
+    std::fs::write(path, contents).map_err(|e| format!("failed to write {}: {e}", path.display()))
 }
 
 fn reject_registration_path_collisions(
@@ -351,21 +454,6 @@ fn canonicalize_registration_path(path: &Path, label: &str) -> Result<PathBuf, S
         )
     })?;
     Ok(parent.join(file_name))
-}
-
-fn write_regular_file(path: &Path, contents: &[u8]) -> Result<(), String> {
-    if path.exists()
-        && std::fs::symlink_metadata(path)
-            .map_err(|e| format!("failed to inspect {}: {e}", path.display()))?
-            .file_type()
-            .is_symlink()
-    {
-        return Err(format!(
-            "refusing to overwrite symlink at {}",
-            path.display()
-        ));
-    }
-    std::fs::write(path, contents).map_err(|e| format!("failed to write {}: {e}", path.display()))
 }
 
 fn combine_handoff_payload(recipe: &Recipe, manifest: &Manifest, emitted_manifest: &Path) -> Value {

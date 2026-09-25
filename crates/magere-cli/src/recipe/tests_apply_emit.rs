@@ -4,6 +4,81 @@ use crate::manifest::Manifest;
 use tempfile::TempDir;
 
 #[test]
+fn test_apply_rejects_symlinked_output_base() {
+    use std::os::unix::fs::symlink;
+
+    let dir = TempDir::new().expect("temp dir");
+    write_manifest_with_artifact(
+        &dir.path().join("manifest.json"),
+        &sample_manifest_json("sample-v1", "sample_model", "safetensors"),
+    );
+    let outside = TempDir::new().expect("outside dir");
+    symlink(outside.path(), dir.path().join("linked-out")).expect("symlink output base");
+
+    let recipe_path = dir.path().join("recipe.json");
+    std::fs::write(
+        &recipe_path,
+        format!(
+            r#"{{
+          "recipe_id": "symlink-output-base",
+          "type": "register",
+          "inputs": {{ "source_manifest": "manifest.json" }},
+          "outputs": {{ "output_dir": {} }}
+        }}"#,
+            serde_json::to_string(&dir.path().join("linked-out").to_string_lossy()).unwrap()
+        ),
+    )
+    .expect("write recipe");
+
+    let recipe = Recipe::from_file(&recipe_path).expect("load recipe");
+    let err = recipe
+        .apply(Some(&dir.path().join("registry.json")))
+        .expect_err("symlinked output base must not be followed");
+    assert!(err.contains("refusing symlink"), "{err}");
+    assert!(
+        !outside.path().join("manifests").exists() && !outside.path().join("handoff").exists(),
+        "apply must not write through a symlinked output base"
+    );
+}
+
+#[test]
+fn test_apply_rejects_symlinked_handoff_destination() {
+    use std::os::unix::fs::symlink;
+
+    let dir = TempDir::new().expect("temp dir");
+    write_manifest_with_artifact(
+        &dir.path().join("manifest.json"),
+        &sample_manifest_json("sample-v1", "sample_model", "safetensors"),
+    );
+    std::fs::create_dir_all(dir.path().join("handoff")).expect("mkdir handoff");
+    let outside = dir.path().join("outside.json");
+    std::fs::write(&outside, b"secret").expect("write outside target");
+    symlink(&outside, dir.path().join("handoff").join("sample-v1.json"))
+        .expect("symlink handoff leaf");
+
+    let recipe_path = dir.path().join("recipe.json");
+    std::fs::write(
+        &recipe_path,
+        r#"{
+          "recipe_id": "symlink-handoff-leaf",
+          "type": "register",
+          "inputs": { "source_manifest": "manifest.json" }
+        }"#,
+    )
+    .expect("write recipe");
+
+    let recipe = Recipe::from_file(&recipe_path).expect("load recipe");
+    let err = recipe
+        .apply(Some(&dir.path().join("registry.json")))
+        .expect_err("symlinked handoff leaf must not be overwritten");
+    assert!(err.contains("refusing symlink"), "{err}");
+    assert_eq!(
+        std::fs::read_to_string(&outside).expect("outside file unchanged"),
+        "secret"
+    );
+}
+
+#[test]
 fn test_apply_does_not_truncate_in_place_manifest() {
     let dir = TempDir::new().expect("temp dir");
     let manifests = dir.path().join("manifests");

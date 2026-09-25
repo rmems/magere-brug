@@ -162,7 +162,7 @@ fn register_command(manifest_path: &Path, registry_path: Option<&Path>) -> Resul
         ArtifactRegistry::new()
     };
 
-    registry.register(&manifest)?;
+    registry.register_at(&manifest, Some(manifest_path))?;
 
     let serialized = registry
         .to_json_pretty()

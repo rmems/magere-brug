@@ -79,6 +79,44 @@ fn test_apply_rejects_symlinked_handoff_destination() {
 }
 
 #[test]
+fn test_apply_rejects_dangling_symlink_at_handoff_destination() {
+    use std::os::unix::fs::symlink;
+
+    let dir = TempDir::new().expect("temp dir");
+    write_manifest_with_artifact(
+        &dir.path().join("manifest.json"),
+        &sample_manifest_json("sample-v1", "sample_model", "safetensors"),
+    );
+    std::fs::create_dir_all(dir.path().join("handoff")).expect("mkdir handoff");
+    symlink(
+        dir.path().join("missing-target.json"),
+        dir.path().join("handoff").join("sample-v1.json"),
+    )
+    .expect("dangling symlink handoff leaf");
+
+    let recipe_path = dir.path().join("recipe.json");
+    std::fs::write(
+        &recipe_path,
+        r#"{
+          "recipe_id": "dangling-symlink-handoff-leaf",
+          "type": "register",
+          "inputs": { "source_manifest": "manifest.json" }
+        }"#,
+    )
+    .expect("write recipe");
+
+    let recipe = Recipe::from_file(&recipe_path).expect("load recipe");
+    let err = recipe
+        .apply(Some(&dir.path().join("registry.json")))
+        .expect_err("dangling symlink at handoff leaf must not be followed");
+    assert!(err.contains("refusing symlink"), "{err}");
+    assert!(
+        !dir.path().join("missing-target.json").exists(),
+        "apply must not create the dangling symlink target"
+    );
+}
+
+#[test]
 fn test_apply_does_not_truncate_in_place_manifest() {
     let dir = TempDir::new().expect("temp dir");
     let manifests = dir.path().join("manifests");

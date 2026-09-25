@@ -54,15 +54,16 @@ fn reject_symlink_components(path: &Path, label: &str) -> Result<(), String> {
         if prefix.as_os_str().is_empty() {
             continue;
         }
-        if !prefix.exists() {
-            break;
-        }
-        let metadata = std::fs::symlink_metadata(&prefix).map_err(|e| {
-            format!(
-                "failed to inspect {label} path component {}: {e}",
-                prefix.display()
-            )
-        })?;
+        let metadata = match std::fs::symlink_metadata(&prefix) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => break,
+            Err(error) => {
+                return Err(format!(
+                    "failed to inspect {label} path component {}: {error}",
+                    prefix.display()
+                ));
+            }
+        };
         if metadata.file_type().is_symlink() {
             return Err(format!(
                 "refusing symlink in {label} path at {}",
@@ -115,16 +116,18 @@ fn ensure_path_under_base(output_base: &Path, path: &Path, label: &str) -> Resul
 }
 
 fn write_regular_file(path: &Path, contents: &[u8]) -> Result<(), String> {
-    if path.exists()
-        && std::fs::symlink_metadata(path)
-            .map_err(|e| format!("failed to inspect {}: {e}", path.display()))?
-            .file_type()
-            .is_symlink()
-    {
-        return Err(format!(
-            "refusing to overwrite symlink at {}",
-            path.display()
-        ));
+    match std::fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.file_type().is_symlink() => {
+            return Err(format!(
+                "refusing to overwrite symlink at {}",
+                path.display()
+            ));
+        }
+        Ok(_) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => {
+            return Err(format!("failed to inspect {}: {error}", path.display()));
+        }
     }
     std::fs::write(path, contents).map_err(|e| format!("failed to write {}: {e}", path.display()))
 }

@@ -112,6 +112,12 @@ pub struct SourceLineage {
     pub path: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub checksum: Option<Checksum>,
+    /// Path of the dissect manifest that determined the pack's tensor table.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dissect_manifest_path: Option<String>,
+    /// Checksum of that dissect manifest file, so the emitted tensor table is auditable.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dissect_manifest_checksum: Option<Checksum>,
 }
 
 /// Tensor counts for a GOZ1 (or similar) pack.

@@ -138,6 +138,10 @@ pub struct Recipe {
     /// not re-parse the SAAQ-specific knobs.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub saaq: Option<Value>,
+    /// Pack runner configuration for `magere pack-goz1`. Validated by the schema;
+    /// execution stays in the pack CLI, not `magere recipe apply`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pack: Option<Value>,
     /// Path the recipe was loaded from. Never serialized; used to resolve
     /// relative manifest references without depending on the caller's cwd.
     #[serde(skip)]

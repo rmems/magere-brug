@@ -1,6 +1,7 @@
 use crate::manifest::Manifest;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 
 /// Artifact Registry - tracks all registered models and their manifests
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -18,6 +19,12 @@ pub struct RegistryEntry {
     pub registered_at: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub notes: Option<String>,
+    /// Absolute or caller-supplied path of the registered manifest file.
+    ///
+    /// Used by `pack-goz1` when `inputs.source_manifest` is a registry slug or
+    /// `manifest_id` rather than a filesystem path.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub manifest_path: Option<PathBuf>,
 }
 
 impl ArtifactRegistry {
@@ -29,8 +36,12 @@ impl ArtifactRegistry {
         }
     }
 
-    /// Register a model from its manifest
-    pub fn register(&mut self, manifest: &Manifest) -> Result<(), String> {
+    /// Register a model and remember the manifest file that described it.
+    pub fn register_at(
+        &mut self,
+        manifest: &Manifest,
+        manifest_path: Option<&Path>,
+    ) -> Result<(), String> {
         manifest.validate()?;
 
         if self.models.contains_key(&manifest.model.slug) {
@@ -47,6 +58,7 @@ impl ArtifactRegistry {
             status: "registered".to_string(),
             registered_at: chrono::Utc::now().to_rfc3339(),
             notes: manifest.metadata.description.clone(),
+            manifest_path: manifest_path.map(Path::to_path_buf),
         };
 
         self.models.insert(manifest.model.slug.clone(), entry);
@@ -65,6 +77,10 @@ impl ArtifactRegistry {
             .filter(|entry| entry.manifest_id == manifest.metadata.manifest_id)
             .map(|entry| entry.registered_at.clone())
             .unwrap_or_else(|| chrono::Utc::now().to_rfc3339());
+        let manifest_path = self
+            .models
+            .get(&manifest.model.slug)
+            .and_then(|entry| entry.manifest_path.clone());
         let entry = RegistryEntry {
             slug: manifest.model.slug.clone(),
             manifest_id: manifest.metadata.manifest_id.clone(),
@@ -72,6 +88,7 @@ impl ArtifactRegistry {
             status: "registered".to_string(),
             registered_at,
             notes: manifest.metadata.description.clone(),
+            manifest_path,
         };
 
         self.models.insert(manifest.model.slug.clone(), entry);
@@ -82,6 +99,13 @@ impl ArtifactRegistry {
     #[allow(dead_code)]
     pub fn lookup(&self, slug: &str) -> Option<&RegistryEntry> {
         self.models.get(slug)
+    }
+
+    /// Look up a model by the manifest id recorded at registration.
+    pub fn lookup_by_manifest_id(&self, manifest_id: &str) -> Option<&RegistryEntry> {
+        self.models
+            .values()
+            .find(|entry| entry.manifest_id == manifest_id)
     }
 
     /// List all registered models
@@ -168,7 +192,7 @@ mod tests {
         let mut registry = ArtifactRegistry::new();
         let manifest = create_test_manifest();
 
-        let result = registry.register(&manifest);
+        let result = registry.register_at(&manifest, None);
         assert!(result.is_ok());
         assert_eq!(registry.count(), 1);
     }
@@ -177,7 +201,7 @@ mod tests {
     fn test_registry_lookup() {
         let mut registry = ArtifactRegistry::new();
         let manifest = create_test_manifest();
-        registry.register(&manifest).unwrap();
+        registry.register_at(&manifest, None).unwrap();
 
         let entry = registry.lookup("test_model");
         assert!(entry.is_some());
@@ -197,7 +221,7 @@ mod tests {
     fn test_registry_list_all() {
         let mut registry = ArtifactRegistry::new();
         let manifest1 = create_test_manifest();
-        registry.register(&manifest1).unwrap();
+        registry.register_at(&manifest1, None).unwrap();
 
         let list = registry.list_all();
         assert_eq!(list.len(), 1);

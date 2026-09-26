@@ -118,6 +118,13 @@ struct RawRecipe {
     outputs: Option<RawOutputs>,
     #[serde(default)]
     saaq: Option<RawSaaq>,
+    /// Retained only so validation can issue a clear SAAQ-specific error.
+    #[serde(default)]
+    #[allow(dead_code)]
+    calibration: Option<serde_json::Value>,
+    #[serde(default)]
+    #[allow(dead_code)]
+    handoff: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -127,6 +134,9 @@ struct RawInputs {
     source_manifest: Option<String>,
     #[serde(default)]
     goz1_ref: Option<String>,
+    #[serde(default)]
+    #[allow(dead_code)]
+    source_format: Option<String>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -138,6 +148,24 @@ struct RawOutputs {
     manifest_id: Option<String>,
     #[serde(default)]
     output_dir: Option<String>,
+    #[serde(default)]
+    #[allow(dead_code)]
+    artifact_path: Option<String>,
+    #[serde(default)]
+    #[allow(dead_code)]
+    goz1_version: Option<u32>,
+    #[serde(default)]
+    #[allow(dead_code)]
+    checksum_algorithm: Option<String>,
+    #[serde(default)]
+    #[allow(dead_code)]
+    register: Option<bool>,
+    #[serde(default)]
+    #[allow(dead_code)]
+    registry_path: Option<String>,
+    #[serde(default)]
+    #[allow(dead_code)]
+    lineage: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -289,9 +317,22 @@ pub fn run_saaq_command(
     output_dir_override: Option<&Path>,
 ) -> Result<String, String> {
     let config = SaaqRunConfig::load(recipe_path, output_dir_override)?;
-    let report = execute(&config)?;
+    Ok(format_saaq_report(&config, execute(&config)?))
+}
 
-    Ok(format!(
+/// Execute a SAAQ recipe from already-read JSON so apply does not reread the file.
+pub fn run_saaq_from_json(
+    contents: &str,
+    recipe_path: &Path,
+    output_dir_override: Option<&Path>,
+) -> Result<String, String> {
+    let config = SaaqRunConfig::from_json(contents, recipe_path, output_dir_override)?;
+    validate_saaq_recipe_invariants(contents, &config)?;
+    Ok(format_saaq_report(&config, execute(&config)?))
+}
+
+fn format_saaq_report(config: &SaaqRunConfig, report: SaaqRunReport) -> String {
+    format!(
         "✓ SAAQ run '{}' complete ({} ticks, projection {}, rule {}{})\n  \
          latent telemetry: {}\n  sha256:           {}\n  run manifest:     {}",
         config.recipe_id,
@@ -302,7 +343,141 @@ pub fn run_saaq_command(
         report.latent_csv_path.display(),
         report.latent_csv_sha256,
         report.run_manifest_path.display(),
-    ))
+    )
+}
+
+/// When `--output-dir` supplies the only output path, merge it into a copy for validation.
+fn saaq_validation_recipe_text(
+    contents: &str,
+    output_dir_override: Option<&Path>,
+) -> Result<String, String> {
+    let Some(output_dir) = output_dir_override else {
+        return Ok(contents.to_string());
+    };
+    let mut value: serde_json::Value = serde_json::from_str(contents)
+        .map_err(|e| format!("Failed to parse recipe for validation: {e}"))?;
+    let outputs = value
+        .as_object_mut()
+        .and_then(|object| object.get_mut("outputs"))
+        .and_then(|outputs| outputs.as_object_mut());
+    match outputs {
+        Some(outputs) if outputs.contains_key("output_dir") => {}
+        Some(outputs) => {
+            outputs.insert(
+                "output_dir".to_string(),
+                serde_json::Value::String(output_dir.to_string_lossy().into_owned()),
+            );
+        }
+        None => {
+            value["outputs"] = serde_json::json!({
+                "output_dir": output_dir.to_string_lossy(),
+            });
+        }
+    }
+    serde_json::to_string(&value)
+        .map_err(|e| format!("Failed to serialize recipe for validation: {e}"))
+}
+
+/// Reject SAAQ fields the runner does not consume, and enforce source-format assertions.
+pub(crate) fn validate_saaq_recipe_invariants(
+    contents: &str,
+    config: &SaaqRunConfig,
+) -> Result<(), String> {
+    let value: serde_json::Value = serde_json::from_str(contents)
+        .map_err(|e| format!("Failed to parse recipe for SAAQ invariants: {e}"))?;
+    reject_unconsumed_saaq_fields(&value)?;
+    assert_declared_source_format(&value, config)
+}
+
+fn reject_unconsumed_saaq_fields(value: &serde_json::Value) -> Result<(), String> {
+    if value.get("calibration").is_some() {
+        return Err(
+            "saaq recipes do not support dataset calibration; omit calibration or use a pack recipe"
+                .to_string(),
+        );
+    }
+    if value.pointer("/outputs/register") == Some(&serde_json::Value::Bool(true)) {
+        return Err(
+            "saaq recipes do not register artifacts; omit outputs.register or use type 'register'"
+                .to_string(),
+        );
+    }
+    if value.pointer("/outputs/registry_path").is_some() {
+        return Err("saaq recipes do not write a registry; omit outputs.registry_path".to_string());
+    }
+    if value.pointer("/outputs/artifact_path").is_some() {
+        return Err("saaq recipes do not produce outputs.artifact_path; omit it".to_string());
+    }
+    for (pointer, message) in [
+        (
+            "/outputs/generated_format",
+            "saaq recipes do not produce outputs.generated_format; omit it",
+        ),
+        (
+            "/outputs/manifest_id",
+            "saaq recipes do not produce outputs.manifest_id; omit it",
+        ),
+        (
+            "/outputs/goz1_version",
+            "saaq recipes do not consume outputs.goz1_version; omit it",
+        ),
+        (
+            "/outputs/checksum_algorithm",
+            "saaq recipes do not consume outputs.checksum_algorithm; omit it",
+        ),
+        (
+            "/outputs/lineage",
+            "saaq recipes do not consume outputs.lineage; omit it",
+        ),
+    ] {
+        if value.pointer(pointer).is_some() {
+            return Err(message.to_string());
+        }
+    }
+    Ok(())
+}
+
+fn assert_declared_source_format(
+    value: &serde_json::Value,
+    config: &SaaqRunConfig,
+) -> Result<(), String> {
+    let Some(expected) = value
+        .pointer("/inputs/source_format")
+        .and_then(serde_json::Value::as_str)
+    else {
+        return Ok(());
+    };
+    let Some(resolved) = &config.source_manifest else {
+        return Err(
+            "inputs.source_format is set but inputs.source_manifest could not be resolved"
+                .to_string(),
+        );
+    };
+    let bytes = std::fs::read(&resolved.resolved_path)
+        .map_err(|e| format!("failed to load {}: {e}", resolved.resolved_path.display()))?;
+    let actual_sha256 = checksum::compute_bytes_sha256(&bytes);
+    if !actual_sha256.eq_ignore_ascii_case(&resolved.sha256) {
+        return Err(format!(
+            "failed to load {}: contents changed after validation (expected sha256 {}, got {})",
+            resolved.resolved_path.display(),
+            resolved.sha256,
+            actual_sha256
+        ));
+    }
+    let contents = std::str::from_utf8(&bytes)
+        .map_err(|e| format!("failed to load {}: {e}", resolved.resolved_path.display()))?;
+    let manifest = crate::manifest::Manifest::from_json(contents)
+        .map_err(|e| format!("failed to load {}: {e}", resolved.resolved_path.display()))?;
+    manifest.validate()?;
+    if manifest.source_artifact.format == expected {
+        Ok(())
+    } else {
+        Err(format!(
+            "inputs.source_format '{expected}' does not match the referenced manifest's \
+             source_artifact.format '{}'",
+            manifest.source_artifact.format
+        ))
+    }
 }
 
 // ── Recipe loading + validation ───────────────────────────────────────────
@@ -312,7 +487,11 @@ impl SaaqRunConfig {
     pub fn load(recipe_path: &Path, output_dir_override: Option<&Path>) -> Result<Self, String> {
         let contents = std::fs::read_to_string(recipe_path)
             .map_err(|e| format!("Failed to read recipe '{}': {}", recipe_path.display(), e))?;
-        Self::from_json(&contents, recipe_path, output_dir_override)
+        let validation_contents = saaq_validation_recipe_text(&contents, output_dir_override)?;
+        crate::recipe::validate_recipe_bytes(recipe_path, &validation_contents)?;
+        let config = Self::from_json(&contents, recipe_path, output_dir_override)?;
+        validate_saaq_recipe_invariants(&contents, &config)?;
+        Ok(config)
     }
 
     /// Turn recipe JSON into a validated run configuration.
@@ -498,7 +677,7 @@ impl SaaqRunConfig {
 /// non-null type when present. Treating `null` as absence would silently apply
 /// defaults to malformed experiment parameters, so enforce that distinction
 /// across the complete recipe tree before typed deserialization.
-fn reject_explicit_nulls(value: &serde_json::Value, path: &str) -> Result<(), String> {
+pub(crate) fn reject_explicit_nulls(value: &serde_json::Value, path: &str) -> Result<(), String> {
     match value {
         serde_json::Value::Null => {
             let field = if path.is_empty() { "recipe" } else { path };
@@ -1430,6 +1609,8 @@ mod tests {
 
     const CSV_HEADER: &str = "timestamp_ms,avg_pop_firing_rate_hz,membrane_dv_dt,routing_entropy,saaq_delta_q_prev,saaq_delta_q_target,gpu_temp_c,gpu_power_w,cpu_tctl_c,cpu_package_power_w,saaq_delta_q_legacy_prev,saaq_delta_q_legacy_target,saaq_delta_q_v15_prev,saaq_delta_q_v15_target";
 
+    const EXAMPLE_MANIFEST_REF: &str = "manifests/examples/olmoe-1b-7b-instruct.json";
+
     fn repo_root() -> PathBuf {
         // crates/magere-cli -> crates -> <repo root>
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -1476,7 +1657,7 @@ mod tests {
     }}{extra}
   }}
 }}"#,
-            manifest = json_path(&example_manifest()),
+            manifest = "manifests/examples/olmoe-1b-7b-instruct.json",
         )
     }
 
@@ -1724,7 +1905,7 @@ mod tests {
     fn rejects_input_ref_that_does_not_resolve() {
         let out = TempDir::new().unwrap();
         let json = recipe_json(2, "").replace(
-            &json_path(&example_manifest()),
+            EXAMPLE_MANIFEST_REF,
             "manifests/examples/does-not-exist.json",
         );
         let error = config_from(&json, out.path()).unwrap_err();
@@ -1762,7 +1943,7 @@ mod tests {
         let json = recipe_json(2, "").replace(
             &format!(
                 "\"inputs\": {{ \"source_manifest\": \"{}\" }},",
-                json_path(&example_manifest())
+                EXAMPLE_MANIFEST_REF
             ),
             "",
         );
@@ -1839,6 +2020,43 @@ mod tests {
     }
 
     #[test]
+    fn rejects_unproduced_artifact_path() {
+        let out = TempDir::new().unwrap();
+        let json = recipe_json(2, "").replace(
+            "\"recipe_id\": \"unit-test-saaq\"",
+            "\"recipe_id\": \"unit-test-saaq\",\n  \"outputs\": { \"artifact_path\": \"unused.bin\" }",
+        );
+        let config = config_from(&json, out.path()).unwrap();
+        let error = validate_saaq_recipe_invariants(&json, &config).unwrap_err();
+        assert!(error.contains("outputs.artifact_path"), "{error}");
+    }
+
+    #[test]
+    fn source_format_validation_rejects_manifest_changed_after_resolution() {
+        let input = TempDir::new().unwrap();
+        let manifest_path = input.path().join("source.json");
+        let original = std::fs::read_to_string(example_manifest()).unwrap();
+        std::fs::write(&manifest_path, &original).unwrap();
+        let json = recipe_json(2, "")
+            .replace(EXAMPLE_MANIFEST_REF, &json_path(&manifest_path))
+            .replace(
+                "\"inputs\": { \"source_manifest\":",
+                "\"inputs\": { \"source_format\": \"gguf\", \"source_manifest\":",
+            );
+        let out = TempDir::new().unwrap();
+        let config = config_from(&json, out.path()).unwrap();
+
+        let changed = original.replace("\"format\": \"gguf\"", "\"format\": \"safetensors\"");
+        std::fs::write(&manifest_path, changed).unwrap();
+        let error = validate_saaq_recipe_invariants(&json, &config).unwrap_err();
+        assert!(
+            error.contains("contents changed after validation"),
+            "{error}"
+        );
+        assert!(error.contains("sha256"), "{error}");
+    }
+
+    #[test]
     fn accepts_every_schema_generated_format() {
         for format in GENERATED_FORMATS {
             let out = TempDir::new().unwrap();
@@ -1885,7 +2103,7 @@ mod tests {
         let out = TempDir::new().unwrap();
         // An unbounded ancestor walk used to resolve this to /etc/hostname and
         // record a system file as the run's provenance.
-        let json = recipe_json(2, "").replace(&json_path(&example_manifest()), "etc/hostname");
+        let json = recipe_json(2, "").replace(EXAMPLE_MANIFEST_REF, "etc/hostname");
         let error = config_from(&json, out.path()).unwrap_err();
         assert!(
             error.contains("source_manifest"),
@@ -1896,8 +2114,7 @@ mod tests {
     #[test]
     fn input_refs_reject_parent_directory_segments() {
         let out = TempDir::new().unwrap();
-        let json =
-            recipe_json(2, "").replace(&json_path(&example_manifest()), "../../../../etc/hostname");
+        let json = recipe_json(2, "").replace(EXAMPLE_MANIFEST_REF, "../../../../etc/hostname");
         let error = config_from(&json, out.path()).unwrap_err();
         assert!(
             error.contains("must not contain '..'"),
@@ -1917,7 +2134,7 @@ mod tests {
         std::fs::write(&outside_manifest, "outside").unwrap();
         symlink(&outside_manifest, tree.path().join("escape.json")).unwrap();
 
-        let json = recipe_json(2, "").replace(&json_path(&example_manifest()), "escape.json");
+        let json = recipe_json(2, "").replace(EXAMPLE_MANIFEST_REF, "escape.json");
         let error =
             SaaqRunConfig::from_json(&json, &tree.path().join("recipe.json"), Some(tree.path()))
                 .unwrap_err();
@@ -1931,7 +2148,7 @@ mod tests {
     fn nested_crate_recipes_resolve_refs_from_the_workspace_root() {
         let out = TempDir::new().unwrap();
         let json = recipe_json(2, "").replace(
-            &json_path(&example_manifest()),
+            EXAMPLE_MANIFEST_REF,
             "manifests/examples/olmoe-1b-7b-instruct.json",
         );
         let nested_recipe = repo_root().join("crates/magere-cli/configs/nested-recipe.json");
@@ -1990,10 +2207,7 @@ mod tests {
         std::fs::write(&source_manifest, validated_bytes).unwrap();
 
         let out = TempDir::new().unwrap();
-        let json = recipe_json(2, "").replace(
-            &json_path(&example_manifest()),
-            &json_path(&source_manifest),
-        );
+        let json = recipe_json(2, "").replace(EXAMPLE_MANIFEST_REF, &json_path(&source_manifest));
         let config = config_from(&json, out.path()).unwrap();
         let validated_sha256 = checksum::compute_string_sha256(validated_bytes);
 
@@ -2013,7 +2227,7 @@ mod tests {
 
     #[test]
     fn run_manifest_pins_the_recipe_bytes_that_were_parsed() {
-        let recipe_dir = TempDir::new().unwrap();
+        let recipe_dir = TempDir::new_in(repo_root()).unwrap();
         let recipe_path = recipe_dir.path().join("recipe.json");
         let validated_recipe = recipe_json(2, "");
         std::fs::write(&recipe_path, &validated_recipe).unwrap();
@@ -2085,7 +2299,7 @@ mod tests {
     "telemetry": {{ "source": "csv", "path": "{telemetry}" }}
   }}
 }}"#,
-            manifest = json_path(&example_manifest()),
+            manifest = EXAMPLE_MANIFEST_REF,
             telemetry = json_path(telemetry_path),
         )
     }
@@ -2378,7 +2592,7 @@ mod tests {
 
     #[test]
     fn refuses_to_replace_recipe_named_like_the_run_manifest() {
-        let out = TempDir::new().unwrap();
+        let out = TempDir::new_in(repo_root()).unwrap();
         let recipe_path = out.path().join(RUN_MANIFEST_FILE);
         let recipe = recipe_json(2, "");
         std::fs::write(&recipe_path, &recipe).unwrap();
@@ -2404,7 +2618,7 @@ mod tests {
 
             let json = recipe_json(2, "")
                 .replace("source_manifest", field)
-                .replace(&json_path(&example_manifest()), &json_path(&input_path));
+                .replace(EXAMPLE_MANIFEST_REF, &json_path(&input_path));
             let error = config_from(&json, out.path())
                 .and_then(|config| execute(&config).map(|_| ()))
                 .unwrap_err();

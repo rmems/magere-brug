@@ -32,6 +32,8 @@ Does not own:
 ```bash
 cargo build --workspace
 cargo test --workspace
+cargo run --bin magere -- recipe validate configs/recipes/register-gguf-example.json
+cargo run --bin magere -- recipe apply configs/recipes/register-gguf-example.json --registry artifacts/registry.json
 ```
 
-See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the manifest format and crate layout.
+See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the manifest format, recipe pipeline, and crate layout.

@@ -1,10 +1,11 @@
 {
   "recipe_id": "olmoe-goz1-ref-example",
   "type": "goz1_pack",
-  "description": "Reference-only recipe: points at a source manifest and an existing GOZ1 pack, with no `pack` block. It is not executable by `magere pack-goz1`, which requires a `pack` block; use configs/recipes/ternary-pack-example.json for that.",
+  "description": "Reference-only recipe: points at a source manifest and an existing GOZ1 pack, with no `pack` block. It validates under the recipe pipeline but is not executable by `magere pack-goz1` (that command requires a `pack` block). Use configs/recipes/ternary-pack-example.json for a runnable pack.",
   "inputs": {
-    "source_manifest": "manifests/examples/olmoe-1b-7b-instruct.json",
-    "goz1_ref": "manifests/examples/goz1-pack-example.json"
+    "source_manifest": "manifests/examples/goz1-pack-example.json",
+    "goz1_ref": "manifests/examples/goz1-pack-example.json",
+    "source_format": "safetensors"
   },
   "outputs": {
     "generated_format": "goz1",

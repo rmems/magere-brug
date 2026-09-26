@@ -1,6 +1,7 @@
 mod checksum;
 mod manifest;
 mod pack;
+mod recipe;
 mod registry;
 mod saaq;
 
@@ -75,6 +76,11 @@ enum Commands {
         #[arg(long, value_name = "PATH")]
         output_dir: Option<std::path::PathBuf>,
     },
+    /// Work with pipeline recipes (configs/recipes/*.json)
+    Recipe {
+        #[command(subcommand)]
+        command: recipe::RecipeCommands,
+    },
 }
 
 fn main() {
@@ -131,6 +137,13 @@ fn main() {
                 }
             }
         }
+        Commands::Recipe { command } => match recipe::run(command) {
+            Ok(msg) => println!("{}", msg),
+            Err(e) => {
+                eprintln!("Error: {}", e);
+                std::process::exit(1);
+            }
+        },
     }
 }
 
@@ -369,5 +382,40 @@ mod tests {
         let args = vec!["magere", "run-saaq", "/path/to/recipe.json"];
         let cli = Cli::try_parse_from(args);
         assert!(cli.is_ok());
+    }
+
+    #[test]
+    fn test_cli_parser_recipe_validate() {
+        let args = vec!["magere", "recipe", "validate", "/path/to/recipe.json"];
+        let cli = Cli::try_parse_from(args);
+        assert!(cli.is_ok());
+    }
+
+    #[test]
+    fn test_cli_parser_recipe_inspect() {
+        let args = vec!["magere", "recipe", "inspect", "/path/to/recipe.json"];
+        let cli = Cli::try_parse_from(args);
+        assert!(cli.is_ok());
+    }
+
+    #[test]
+    fn test_cli_parser_recipe_apply() {
+        let args = vec![
+            "magere",
+            "recipe",
+            "apply",
+            "/path/to/recipe.json",
+            "--registry",
+            "/path/to/registry.json",
+        ];
+        let cli = Cli::try_parse_from(args);
+        assert!(cli.is_ok());
+    }
+
+    #[test]
+    fn test_cli_parser_recipe_requires_subcommand() {
+        let args = vec!["magere", "recipe"];
+        let cli = Cli::try_parse_from(args);
+        assert!(cli.is_err());
     }
 }

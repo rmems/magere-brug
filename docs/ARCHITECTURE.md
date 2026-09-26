@@ -14,7 +14,7 @@ This is **not** a general model-training framework. For model training, see `rme
 
 The Rust workspace owns:
 
-- **`magere-cli`** — Manifest validation, artifact registry, checksums, path normalization, run metadata, handoff files, and the recipe-driven GOZ1 pack runner (`magere pack-goz1`).
+- **`magere-cli`** — Manifest validation, artifact registry, checksums, path normalization, run metadata, handoff files, the recipe pipeline (`magere recipe validate|inspect|apply`), and the recipe-driven GOZ1 pack runner (`magere pack-goz1`).
 - **`magere-corinth-core`** — CPU-only SNN pipeline components (`TelemetryEncoder`, `SparseGifHiddenLayer`, `Projector`, `SnnLatentCalibrator`) used for SAAQ validation.
 - **`magere-grok-process`** — Grok-1 specific weight packing, ternary quantization, and manifest parsing utilities.
 - **`magere-bridge`** — Placeholder/WIP crate for future cross-crate glue or external bridge logic. Currently a minimal binary stub.
@@ -171,16 +171,19 @@ Primary path: **packable source → ternary pack (`magere-grok-process`) → GOZ
 
 `magere-grok-process` currently accepts **safetensors** and **npy_dir** as packer `InputFormat`s. NPY directories are recorded in manifests as `source_artifact.format: "local_dir"` (`npy_dir` is **not** a valid `source_artifact.format`) and mapped to `InputFormat::NpyDir` before packing. GGUF remains a first-class *registry* source format for local routing and SAAQ, but is not a direct packer input yet.
 
-### Recipes
+### Recipe pipeline
 
-`schemas/recipe.schema.json` defines recipes that reference manifests and GOZ1 packs:
+`schemas/recipe.schema.json` defines recipes that register existing artifacts, describe packing/export steps, and drive SAAQ validation:
 
-- `type`: `register` | `goz1_pack` | `ternary_pack` | `saaq`
-- `inputs.source_manifest` — path or registry id of the source manifest
-- `inputs.goz1_ref` — path or registry id of a registered GOZ1 pack
-- `outputs.generated_format` — prefer `goz1`
-- `outputs.manifest_id` — id of the manifest to write after the recipe
-- `outputs.output_dir` — directory for pack or SAAQ run outputs
+- `type`: `register` | `goz1_pack` | `ternary_pack` | `gguf_export` | `saaq`
+- `inputs.source_manifest` — path of the source manifest (`*.json`), or a registry slug / `manifest_id` when resolved by `magere pack-goz1`
+- `inputs.source_format` — asserted `source_artifact.format` (`gguf`, `safetensors`, `hf_repo`, `local_dir`)
+- `inputs.goz1_ref` — path of a registered GOZ1 pack
+- `outputs.generated_format` — prefer `goz1`; `gguf` only on the optional export placeholder
+- `outputs.manifest_id` — id of the manifest to write after a pack run
+- `outputs.output_dir` — directory for pack, export, or SAAQ run outputs
+- `calibration` — dataset config for pack/export recipes; forbidden on `register` and `saaq`
+- `handoff` — forward-declared `myelin-accelerator` / `corinth-canal` / `combine-for-AI` placeholders (binary/ternary/SAAQ kernel families)
 - `saaq` — SAAQ runner configuration; only valid on `type: "saaq"` recipes (see [SAAQ Runner](#saaq-runner) below)
 
 A recipe without a `pack` block is reference-only (example: `configs/recipes/goz1-ref-example.json`; runnable SAAQ example: `configs/recipes/saaq-example.json`).
@@ -208,6 +211,121 @@ consumes at `configs/recipes/fixtures/grok-mini-dissect.json`. The example's sou
 Grok-1 MoE checkpoint so the model identity recorded in the emitted manifest matches the family the
 fixture's tensor table describes — pairing a fixture with an unrelated source manifest would register
 an artifact claiming to be one model whose contents are another.
+
+Examples (pipeline): `configs/recipes/register-gguf-example.json`, `register-safetensors-example.json`, `register-local-dir-example.json`, `saaq-example.json`. AWQ/GPTQ are removed comparison paths and are rejected by the schema.
+
+---
+
+## Recipe Pipeline
+
+A **recipe** is a small JSON document under `configs/recipes/` that says what to register, pack, optionally export to GGUF, or calibrate. It never carries weights: it points at manifests and records the lineage of whatever a run produces. `schemas/recipe.schema.json` (JSON Schema v7) is the source of truth and is embedded into `magere-cli` at build time, so recipe validation never depends on the working directory.
+
+### Recipe types and who owns each runner
+
+| `type` | Meaning | Runner |
+|--------|---------|--------|
+| `register` | Record an existing source artifact (GGUF, safetensors, HF repo, local dir) without conversion | **`magere recipe apply`** — writes the registry, copies the artifact manifest, and emits a combine-for-AI handoff file |
+| `goz1_pack` | Pack a source into a GOZ1 artifact | **`magere pack-goz1`** when the recipe carries a `pack` block (`magere recipe apply` validates and points here) |
+| `ternary_pack` | Ternary weight pack, normally emitted as GOZ1 | **`magere pack-goz1`** when the recipe carries a `pack` block |
+| `gguf_export` | Optional conversion from safetensors/HF/local-dir to GGUF | Placeholder — existing GGUF files skip this and use `register` |
+| `saaq` | SAAQ validation run over a source or a registered GOZ1 pack | **`magere run-saaq`** (also via `magere recipe apply`) |
+
+`magere recipe apply` validates every type. It executes `register` and `saaq`. For pack recipes it fails with an error that names `magere pack-goz1`; for `gguf_export` it states the conversion is a placeholder.
+
+AWQ and GPTQ are **not** recipe types. They were removed from the primary path (comparison baselines only) and any recipe string that names them is rejected.
+
+### Structure
+
+```json
+{
+  "recipe_id": "redpajama-ternary-pack-goz1",
+  "type": "register|goz1_pack|ternary_pack|gguf_export|saaq",
+  "description": "What the recipe does",
+  "inputs": {
+    "source_manifest": "manifests/examples/redpajama-incite-7b-chat.json",
+    "source_format": "gguf|safetensors|hf_repo|local_dir",
+    "goz1_ref": "manifests/examples/goz1-pack-example.json"
+  },
+  "outputs": {
+    "generated_format": "goz1|gguf|ternary|binary",
+    "goz1_version": 1,
+    "checksum_algorithm": "sha256",
+    "manifest_id": "redpajama-incite-7b-chat-goz1-v1",
+    "artifact_path": "/packs/redpajama/INCITE-7B-Chat.goz1",
+    "output_dir": "/packs/redpajama",
+    "register": true,
+    "registry_path": "artifacts/registry.json",
+    "lineage": {
+      "parent_manifest_id": "redpajama-incite-7b-chat-v1",
+      "parent_path": "/models/redpajama/INCITE-7B-Chat",
+      "recipe_id": "redpajama-ternary-pack-goz1"
+    }
+  },
+  "calibration": {
+    "dataset": "wikitext-2",
+    "dataset_path": "/datasets/wikitext-2",
+    "config_path": "/configs/quantization/ternary_redpajama_wikitext.json",
+    "sample_count": 512,
+    "seed": 1337
+  },
+  "handoff": {
+    "myelin_accelerator": { "enabled": false, "status": "placeholder", "kernel_types": ["ternary", "binary", "saaq"] },
+    "corinth_canal": { "enabled": false, "status": "placeholder" },
+    "combine_for_ai": { "enabled": true, "status": "ready", "pipeline_id": "..." }
+  }
+}
+```
+
+| Block | Role |
+|-------|------|
+| `inputs.source_manifest` | Manifest to read. A `*.json` value is resolved on disk and parsed as a manifest |
+| `inputs.source_format` | Asserted `source_artifact.format` of the referenced manifest — validation fails when the manifest disagrees |
+| `inputs.goz1_ref` | Manifest carrying a registered GOZ1 pack, for post-pack steps such as SAAQ |
+| `outputs.register` | When true, the runner writes/updates the artifact manifest and adds it to the registry |
+| `outputs.registry_path` | Registry file to write; the `--registry` flag overrides it |
+| `outputs.lineage` | Provenance recorded on the emitted artifact so a pack traces back to its source |
+| `calibration` | Dataset, sample count, and seed. Accepted by ternary/GOZ1 pack and optional GGUF export recipes; `register` and `saaq` recipes must not carry it |
+| `handoff` | Forward-declared placeholders for `myelin-accelerator` (binary/ternary/SAAQ kernels), `corinth-canal`, and `combine-for-AI`. magere-brug records the intent and lineage; it never executes CUDA kernels |
+
+Relative `inputs.*` references are resolved against the recipe file's directory up to the repository root, so a recipe in `configs/recipes/` can name a repo-root-relative `manifests/examples/*.json` from anywhere. Output paths (`registry_path`) resolve against the working directory.
+
+### What `register` emits
+
+`magere recipe apply` on a `register` recipe:
+
+1. Validates the recipe and the referenced source manifest.
+2. Upserts the model into the artifact registry (`outputs.registry_path` or `--registry`).
+3. Copies the source manifest to `<registry-or-output-dir>/manifests/<manifest_id>.json`.
+4. Writes a combine-for-AI handoff file to `<registry-or-output-dir>/handoff/<manifest_id>.json` with `schema: magere-brug/combine-for-ai-handoff/1`, source path/checksum, and `benchmark_linkage.status: ready`.
+
+Existing GGUF artifacts (OLMoE, DeepSeek Coder, other Batch A MoE GGUFs) go through this path with **no conversion**. Safetensors / HF local-dir sources register the same way.
+
+### What validation checks
+
+`magere recipe validate` runs the JSON Schema first, then the semantic checks the schema cannot express:
+
+- Every `source_manifest` / `goz1_ref` reference names a `*.json` manifest path that resolves on disk and parses **and validates** as a manifest
+- `inputs.source_format` matches the manifest's `source_artifact.format`
+- For `register`: `outputs.manifest_id` matches the manifest's `metadata.manifest_id`
+- For `goz1_pack` / `ternary_pack`: the source is `safetensors` or `local_dir` (GGUF is a registry format, not a packer input)
+- For `gguf_export`: the source is `safetensors`, `hf_repo`, or `local_dir` — an already-GGUF source must use `register`
+- **AWQ and GPTQ are rejected anywhere in a recipe** (schema `safe_string` pattern)
+
+### Examples
+
+| File | Type | Demonstrates |
+|------|------|--------------|
+| `configs/recipes/register-gguf-example.json` | `register` | Local OLMoE GGUF routing target, no conversion |
+| `configs/recipes/register-deepseek-gguf-example.json` | `register` | DeepSeek Coder GGUF code-model track |
+| `configs/recipes/register-safetensors-example.json` | `register` | RedPajama safetensors baseline ahead of a pack |
+| `configs/recipes/register-local-dir-example.json` | `register` | Grok-1 local-directory checkpoint (planning only) |
+| `configs/recipes/gguf-export-placeholder-example.json` | `gguf_export` | Optional GGUF conversion placeholder |
+| `configs/recipes/ternary-pack-goz1-example.json` | `ternary_pack` | Pack config shape: calibration, lineage, binary/ternary handoff |
+| `configs/recipes/ternary-pack-example.json` | `ternary_pack` | Runnable `magere pack-goz1` example (skeleton GOZ1 shell) |
+| `configs/recipes/goz1-ref-example.json` | `goz1_pack` | Reference-only pack pointing at an existing GOZ1 manifest |
+| `configs/recipes/saaq-example.json` | `saaq` | Runnable SAAQ validation with myelin-accelerator placeholders |
+
+`manifest-validate.yml` runs `magere recipe validate` over every file in `configs/recipes/` on each PR.
 
 ---
 
@@ -500,6 +618,30 @@ cargo run --bin magere -- verify /models/olmoe/OLMoE-1B-7B-0125-Instruct-F16.ggu
 
 **Output:** ✓ Checksum verified or ✗ Checksum mismatch
 
+### Validate a Recipe
+
+```bash
+cargo run --bin magere -- recipe validate configs/recipes/register-gguf-example.json
+```
+
+**Output:** ✓ Recipe is valid, with its type and the runner that owns it
+
+### Inspect a Recipe
+
+```bash
+cargo run --bin magere -- recipe inspect configs/recipes/ternary-pack-goz1-example.json
+```
+
+**Output:** Human-readable recipe fields (inputs, outputs, lineage, calibration, handoff placeholders)
+
+### Apply a Recipe
+
+```bash
+cargo run --bin magere -- recipe apply configs/recipes/register-gguf-example.json --registry artifacts/registry.json
+```
+
+**Output:** For `type: "register"`, the registered model, the copied artifact manifest, and the combine-for-AI handoff path. For `saaq`, the same summary as `magere run-saaq`. For `goz1_pack` / `ternary_pack`, an error that names `magere pack-goz1`. For `gguf_export`, an error stating the conversion is a placeholder.
+
 ### Pack a GOZ1 Artifact from a Recipe
 
 ```bash
@@ -628,6 +770,7 @@ Manifests track SAAQ experiment metadata:
 - ✓ Rust CLI skeleton (parsing, validation, registry)
 - ✓ Python helper script stubs (GGUF/safetensors inspection)
 - ✓ Example manifests (including GOZ1 pack example)
+- ✓ Recipe schema, loader, validator, `register` runner (`magere recipe validate|inspect|apply`), and automatic artifact-manifest / combine-for-AI handoff emission
 - ✓ Recipe schema for GOZ1 refs, plus an executable `pack` block
 - ✓ Recipe-driven ternary pack → GOZ1 via `magere pack-goz1` (skeleton payloads; see caveat above)
 - ✓ Recipe-driven SAAQ runner (`magere run-saaq`) with deterministic telemetry + run manifest
@@ -643,6 +786,7 @@ Manifests track SAAQ experiment metadata:
 ### Next pipeline work
 
 - Real tensor loading in `magere-grok-process::stream::run_quantize` (until then `magere pack-goz1` emits placeholder payloads and `status: "planned"`)
+- Optional GGUF export execution (the `gguf_export` config shape already validates; existing GGUF files stay on `register`)
 - SAAQ runs driven from real hardware telemetry captures rather than synthetic ramps
 - myelin-accelerator kernel invocation from handoff manifests
 - Cloud backend integration (NIM, Vertex AI, etc.) when needed

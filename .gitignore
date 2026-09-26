@@ -11,3 +11,6 @@ venv/
 artifacts/packs/*
 !artifacts/packs/.gitkeep
 artifacts/saaq/
+artifacts/registry.json
+artifacts/manifests/
+artifacts/handoff/

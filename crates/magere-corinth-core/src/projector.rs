@@ -112,6 +112,8 @@ impl Projector {
         let fan_in = feature_dim as f32;
         let fan_out = EMBEDDING_DIM as f32;
         let limit = (6.0_f32 / (fan_in + fan_out)).sqrt();
+        // Truncated literal is an intentional deterministic seed; do not use f32::consts::GOLDEN_RATIO.
+        #[allow(clippy::approx_constant)]
         const GOLDEN_RATIO_FRAC: f32 = 1.618_034;
 
         // Deterministic Xavier-uniform init (no external rng dep needed).

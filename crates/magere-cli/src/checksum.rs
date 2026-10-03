@@ -1,6 +1,13 @@
 use sha2::{Digest, Sha256};
 use std::fs;
 
+/// Compute the SHA256 checksum of an in-memory byte buffer.
+pub fn compute_bytes_sha256(content: &[u8]) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(content);
+    format!("{:x}", hasher.finalize())
+}
+
 /// Compute SHA256 checksum of a file
 pub fn compute_file_sha256<P: AsRef<std::path::Path>>(
     path: P,
@@ -26,9 +33,7 @@ pub fn compute_file_sha256<P: AsRef<std::path::Path>>(
 /// Compute SHA256 checksum of a string
 #[allow(dead_code)]
 pub fn compute_string_sha256(content: &str) -> String {
-    let mut hasher = Sha256::new();
-    hasher.update(content.as_bytes());
-    format!("{:x}", hasher.finalize())
+    compute_bytes_sha256(content.as_bytes())
 }
 
 /// Verify file checksum against expected SHA256

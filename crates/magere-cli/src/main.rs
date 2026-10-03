@@ -2,6 +2,7 @@ mod checksum;
 mod manifest;
 mod recipe;
 mod registry;
+mod saaq;
 
 use clap::{Parser, Subcommand};
 use manifest::Manifest;
@@ -50,6 +51,16 @@ enum Commands {
         #[arg(value_name = "SHA256")]
         checksum: String,
     },
+    /// Run a recipe-driven SAAQ validation pass (CPU-only, deterministic)
+    RunSaaq {
+        /// Path to SAAQ recipe JSON file
+        #[arg(value_name = "RECIPE")]
+        recipe: std::path::PathBuf,
+
+        /// Output directory for the run (overrides the recipe's outputs.output_dir)
+        #[arg(long, value_name = "PATH")]
+        output_dir: Option<std::path::PathBuf>,
+    },
     /// Work with pipeline recipes (configs/recipes/*.json)
     Recipe {
         #[command(subcommand)]
@@ -91,6 +102,15 @@ fn main() {
                 std::process::exit(1);
             }
         },
+        Commands::RunSaaq { recipe, output_dir } => {
+            match saaq::run_saaq_command(&recipe, output_dir.as_deref()) {
+                Ok(msg) => println!("{}", msg),
+                Err(e) => {
+                    eprintln!("Error: {}", e);
+                    std::process::exit(1);
+                }
+            }
+        }
         Commands::Recipe { command } => match recipe::run(command) {
             Ok(msg) => println!("{}", msg),
             Err(e) => {
@@ -250,6 +270,26 @@ mod tests {
             "--registry",
             "/path/to/registry.json",
         ];
+        let cli = Cli::try_parse_from(args);
+        assert!(cli.is_ok());
+    }
+
+    #[test]
+    fn test_cli_parser_run_saaq() {
+        let args = vec![
+            "magere",
+            "run-saaq",
+            "/path/to/recipe.json",
+            "--output-dir",
+            "/path/to/run",
+        ];
+        let cli = Cli::try_parse_from(args);
+        assert!(cli.is_ok());
+    }
+
+    #[test]
+    fn test_cli_parser_run_saaq_without_output_dir() {
+        let args = vec!["magere", "run-saaq", "/path/to/recipe.json"];
         let cli = Cli::try_parse_from(args);
         assert!(cli.is_ok());
     }

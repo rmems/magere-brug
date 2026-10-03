@@ -1,0 +1,27 @@
+{
+  "recipe_id": "deepseek-coder-register-gguf",
+  "type": "register",
+  "description": "Register the existing DeepSeek-Coder-V2-Lite GGUF artifact for the later code-model track. No conversion; the Q6_K GGUF is already the source of truth.",
+  "inputs": {
+    "source_manifest": "manifests/examples/deepseek-coder-v2-lite.json",
+    "source_format": "gguf"
+  },
+  "outputs": {
+    "manifest_id": "deepseek-coder-v2-lite-instruct-v1",
+    "register": true,
+    "registry_path": "artifacts/registry.json"
+  },
+  "handoff": {
+    "combine_for_ai": {
+      "enabled": true,
+      "status": "ready",
+      "notes": "Existing GGUF can be benchmarked directly in combine-for-AI without a GGUF export step."
+    },
+    "myelin_accelerator": {
+      "enabled": false,
+      "status": "placeholder",
+      "kernel_types": ["ternary", "binary", "saaq"],
+      "notes": "Forward-declared only. Later SAAQ/binary/ternary kernels live in myelin-accelerator."
+    }
+  }
+}

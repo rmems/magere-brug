@@ -120,6 +120,7 @@ jobs:
           set -e
           echo "=== Checking schema JSON validity ==="
           python3 -c "import json; json.load(open('schemas/model_manifest.schema.json'))"
+          python3 -c "import json; json.load(open('schemas/recipe.schema.json'))"
           echo "✓ Schema JSON is valid"
 
       - name: Check manifest JSON validity

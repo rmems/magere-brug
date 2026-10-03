@@ -1,7 +1,7 @@
 {
   "recipe_id": "redpajama-ternary-pack-goz1",
   "type": "ternary_pack",
-  "description": "Config shape for a ternary pack that emits a GOZ1 artifact with checksum, version, and lineage. `magere recipe apply` deliberately refuses to execute this; the runner is issue #19 (magere pack-goz1).",
+  "description": "Config shape for a ternary pack that emits a GOZ1 artifact with checksum, version, and lineage. magere recipe apply deliberately refuses to execute this; the runner is issue #19 (magere pack-goz1).",
   "inputs": {
     "source_manifest": "manifests/examples/redpajama-incite-7b-chat.json",
     "source_format": "safetensors"

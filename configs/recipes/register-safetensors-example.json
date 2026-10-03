@@ -24,7 +24,7 @@
     "combine_for_ai": {
       "enabled": false,
       "status": "placeholder",
-      "notes": "Forward-declared only. Benchmark scoring is owned by combine-for-AI."
+      "notes": "Forward-declared only. Benchmark scoring is owned by combine-for-AI; magere recipe apply still emits a handoff file."
     }
   }
 }

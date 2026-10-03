@@ -65,7 +65,7 @@ impl ModelFamily {
 }
 
 /// Minimal local telemetry payload used to seed deterministic spike patterns.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct TelemetrySnapshot {
     pub gpu_temp_c: f32,
     pub gpu_power_w: f32,

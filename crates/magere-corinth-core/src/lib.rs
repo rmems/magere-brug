@@ -50,3 +50,7 @@ pub use types::{
     CheckpointFormat, CloudModelSpec, EMBEDDING_DIM, ModelArchitectureClass, ModelConfig,
     ModelFamily, ModelOutput, ModelTarget, ProjectionMode, RoutingMode, TelemetrySnapshot,
 };
+
+/// Version of this crate, recorded verbatim in SAAQ run manifests so a run
+/// can be traced back to the pipeline build that produced it.
+pub const CRATE_VERSION: &str = env!("CARGO_PKG_VERSION");

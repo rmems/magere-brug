@@ -1,7 +1,7 @@
 {
   "recipe_id": "grok-1-register-local-dir",
   "type": "register",
-  "description": "Register the Grok-1 local-directory checkpoint as a future ternary pack target. Source-only: no weights are read and nothing is packed by this recipe.",
+  "description": "Register the Grok-1 local-directory checkpoint as a future ternary pack target. Source-only planning: no weights are read and nothing is packed or quantized by this recipe.",
   "inputs": {
     "source_manifest": "manifests/examples/grok-1-future-plan.json",
     "source_format": "local_dir"

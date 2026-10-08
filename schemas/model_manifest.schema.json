@@ -302,6 +302,22 @@
                   "type": "string"
                 }
               }
+            },
+            "dissect_manifest_path": {
+              "type": "string",
+              "description": "Path of the xai-dissect manifest whose tiers determined the pack's tensor table"
+            },
+            "dissect_manifest_checksum": {
+              "type": "object",
+              "description": "Checksum of that dissect manifest, so the emitted tensor table is auditable",
+              "properties": {
+                "sha256": {
+                  "type": "string"
+                },
+                "md5": {
+                  "type": "string"
+                }
+              }
             }
           }
         },

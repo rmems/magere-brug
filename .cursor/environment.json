@@ -1,0 +1,4 @@
+{
+  "name": "magere-brug",
+  "install": "bash .cursor/install.sh"
+}

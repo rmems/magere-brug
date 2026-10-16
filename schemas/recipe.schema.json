@@ -85,7 +85,7 @@
         "gguf_export",
         "saaq"
       ],
-      "description": "Recipe kind. `register` records an existing source artifact (GGUF, safetensors, HF repo, local dir) without conversion. `goz1_pack`/`ternary_pack` describe packing runs (runner: issue #19). `gguf_export` is an optional GGUF conversion placeholder; existing GGUF files skip this step. `saaq` describes an SAAQ validation run (`magere run-saaq`)."
+      "description": "Recipe kind. `register` records an existing source artifact (GGUF, safetensors, HF repo, local dir) without conversion. `goz1_pack`/`ternary_pack` are executed by `magere pack-goz1`. `gguf_export` is an optional GGUF conversion placeholder; existing GGUF files skip this step. `saaq` describes an SAAQ validation run (`magere run-saaq`)."
     },
     "description": {
       "description": "Human-readable summary of the recipe",

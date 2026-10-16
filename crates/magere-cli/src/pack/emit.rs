@@ -181,18 +181,29 @@ pub(super) fn format_outcome(outcome: &super::PackOutcome) -> String {
             .and_then(|g| g.status.as_deref())
             .unwrap_or("-")
     ));
-    out.push_str(&format!(
-        "  registry: {} ({})\n",
-        outcome.registry_path.display(),
-        if outcome.registry_replaced {
-            "entry replaced"
-        } else {
-            "entry added"
-        }
-    ));
+    if outcome.registered {
+        out.push_str(&format!(
+            "  registry: {} ({})\n",
+            outcome.registry_path.display(),
+            if outcome.registry_replaced {
+                "entry replaced"
+            } else {
+                "entry added"
+            }
+        ));
+    } else {
+        out.push_str(
+            "  registry: unchanged (outputs.register is false; the pack and manifest were still written)\n",
+        );
+    }
     if outcome.input_dir_missing {
         out.push_str(
             "  note: pack.input_dir does not exist on disk; the skeleton packer never reads it\n",
+        );
+    }
+    if outcome.calibration_declared {
+        out.push_str(
+            "  calibration: declared on the recipe and not applied; the skeleton packer does not calibrate\n",
         );
     }
     out.push_str(&format!("! {}\n", SKELETON_NOTICE));

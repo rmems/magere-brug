@@ -74,12 +74,16 @@ fn a_foreign_registry_entry_is_not_displaced_by_a_new_pack() {
     assert!(err.contains("test-pack-v2.goz1"), "{}", err);
     assert!(err.contains("test-pack-v2.manifest.json"), "{}", err);
     assert!(err.contains("<source model slug>_goz1"), "{}", err);
+    assert!(err.contains("Nothing was written"), "{}", err);
     assert!(
         !err.contains("set a different `outputs.manifest_id`"),
         "{}",
         err
     );
-    assert!(h.output_dir.join("test-pack-v2.goz1").exists());
+    assert!(
+        !h.output_dir.join("test-pack-v2.goz1").exists(),
+        "a slug collision must be refused before the pack is written"
+    );
 
     let registry =
         ArtifactRegistry::from_json(&fs::read_to_string(&h.registry_path).unwrap()).unwrap();

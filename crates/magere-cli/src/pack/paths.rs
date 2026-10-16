@@ -1,7 +1,7 @@
 //! Output layout, path collision checks, and source-manifest resolution.
 
 use crate::manifest::Manifest;
-use crate::registry::ArtifactRegistry;
+use crate::registry::{ArtifactRegistry, PACK_GOZ1_PRODUCER, RegistryEntry};
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
@@ -161,6 +161,10 @@ fn canonicalize_existing(path: &Path, kind: &str) -> Result<PathBuf, String> {
         .map_err(|e| format!("Failed to resolve {kind} '{}': {}", path.display(), e))
 }
 
+pub(super) fn resolve_planned_path(path: &Path) -> Result<PathBuf, String> {
+    resolve_planned(path)
+}
+
 fn resolve_planned(path: &Path) -> Result<PathBuf, String> {
     if path.exists() {
         return canonicalize_existing(path, "path");
@@ -194,4 +198,102 @@ fn resolve_under_parent(path: &Path, parent: &Path, file_name: &OsStr) -> Result
 
 fn paths_alias(left: &Path, right: &Path) -> bool {
     left == right || same_file::is_same_file(left, right).unwrap_or(false)
+}
+
+/// Decide whether this run may replace the slug it is about to write.
+///
+/// Returns `true` only for a replay of this runner's own planned skeleton.
+/// Every other slug, manifest-id, or output-path collision is refused before
+/// any pack bytes are written.
+pub(super) fn reject_registry_collisions(
+    registry: &ArtifactRegistry,
+    slug: &str,
+    manifest_id: &str,
+    pack_path: &Path,
+    manifest_path: &Path,
+    will_register: bool,
+) -> Result<bool, String> {
+    let replace_own = match registry.models.get(slug) {
+        Some(existing) if will_register && own_planned_replay(existing, manifest_id) => true,
+        Some(existing) => {
+            return Err(slug_collision(existing, slug, pack_path, manifest_path));
+        }
+        None => false,
+    };
+    for entry in registry.models.values() {
+        if entry.slug == slug {
+            continue;
+        }
+        if entry.manifest_id == manifest_id {
+            return Err(format!(
+                "outputs.manifest_id '{manifest_id}' is already registered to slug '{}'. \
+                 Refusing to write:\n    {}\n    {}\n  Nothing was written.",
+                entry.slug,
+                pack_path.display(),
+                manifest_path.display()
+            ));
+        }
+        if entry_aliases_outputs(entry, pack_path, manifest_path)? {
+            return Err(format!(
+                "output path '{}' collides with registry slug '{}' (manifest '{}'). \
+                 Nothing was written.",
+                pack_path.display(),
+                entry.slug,
+                entry
+                    .manifest_path
+                    .as_ref()
+                    .map(|path| path.display().to_string())
+                    .unwrap_or_else(|| entry.manifest_id.clone())
+            ));
+        }
+    }
+    Ok(replace_own)
+}
+
+fn own_planned_replay(existing: &RegistryEntry, manifest_id: &str) -> bool {
+    existing.manifest_id == manifest_id
+        && existing.producer.as_deref() == Some(PACK_GOZ1_PRODUCER)
+        && existing.generated_status.as_deref() != Some("success")
+}
+
+fn slug_collision(
+    existing: &RegistryEntry,
+    slug: &str,
+    pack_path: &Path,
+    manifest_path: &Path,
+) -> String {
+    format!(
+        "model slug '{slug}' is already registered (manifest_id '{}', producer: {}). \
+         Refusing to write:\n    {}\n    {}\n  Nothing was written. The registry key is \
+         always `<source model slug>_goz1`; changing `outputs.manifest_id` cannot avoid \
+         this collision.",
+        existing.manifest_id,
+        existing.producer.as_deref().unwrap_or("unspecified"),
+        pack_path.display(),
+        manifest_path.display()
+    )
+}
+
+fn entry_aliases_outputs(
+    entry: &RegistryEntry,
+    pack_path: &Path,
+    manifest_path: &Path,
+) -> Result<bool, String> {
+    let Some(stored) = &entry.manifest_path else {
+        return Ok(false);
+    };
+    let ours = [resolve_planned(pack_path)?, resolve_planned(manifest_path)?];
+    let mut theirs = vec![resolve_planned(stored)?];
+    if let Some(pack) = sibling_goz1(stored) {
+        theirs.push(resolve_planned(&pack)?);
+    }
+    Ok(ours
+        .iter()
+        .any(|output| theirs.iter().any(|existing| paths_alias(output, existing))))
+}
+
+fn sibling_goz1(manifest: &Path) -> Option<PathBuf> {
+    let name = manifest.file_name()?.to_string_lossy();
+    let stem = name.strip_suffix(".manifest.json")?;
+    Some(manifest.with_file_name(format!("{stem}.goz1")))
 }

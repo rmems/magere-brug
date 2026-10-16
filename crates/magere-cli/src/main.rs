@@ -3,11 +3,11 @@ mod manifest;
 mod pack;
 mod recipe;
 mod registry;
+mod registry_io;
 mod saaq;
 
 use clap::{Parser, Subcommand};
 use manifest::Manifest;
-use registry::ArtifactRegistry;
 use std::path::Path;
 
 #[derive(Parser)]
@@ -166,22 +166,11 @@ fn register_command(manifest_path: &Path, registry_path: Option<&Path>) -> Resul
     manifest.validate()?;
 
     let registry_file = registry_path.unwrap_or_else(|| Path::new("registry.json"));
-    let mut registry = if registry_file.exists() {
-        let content = std::fs::read_to_string(registry_file)
-            .map_err(|e| format!("Failed to read registry: {}", e))?;
-        ArtifactRegistry::from_json(&content)
-            .map_err(|e| format!("Failed to parse registry: {}", e))?
-    } else {
-        ArtifactRegistry::new()
-    };
-
-    registry.register_at(&manifest, Some(manifest_path))?;
-
-    let serialized = registry
-        .to_json_pretty()
-        .map_err(|e| format!("Failed to serialize registry: {}", e))?;
-    std::fs::write(registry_file, serialized)
-        .map_err(|e| format!("Failed to write registry: {}", e))?;
+    let _lock = registry_io::RegistryLock::acquire(registry_file)?;
+    let mut registry = registry_io::load_registry(registry_file)?;
+    let canonical_manifest = registry::canonical_manifest_path(manifest_path)?;
+    registry.register_at(&manifest, Some(&canonical_manifest))?;
+    registry_io::store_registry(&registry, registry_file)?;
 
     Ok(format!(
         "✓ Registered model '{}' (slug: {}) to {}",

@@ -78,7 +78,8 @@ pub(super) fn base_recipe(output_dir: &Path) -> serde_json::Value {
 
 pub(super) fn shipped_example_paths() -> (std::path::PathBuf, std::path::PathBuf, String, String) {
     let recipe = load_pack_recipe(Path::new(EXAMPLE_RECIPE)).expect("example recipe parses");
-    let pack = recipe.pack.as_ref().expect("example carries a pack block");
+    let pack =
+        crate::pack::recipe::require_pack_config(&recipe).expect("example carries a pack block");
     let root = Path::new(REPO_ROOT);
     let source_manifest = root.join(
         recipe

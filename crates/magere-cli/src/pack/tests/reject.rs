@@ -59,7 +59,7 @@ fn rejects_missing_source_manifest() {
     recipe["inputs"] = json!({});
     let h = harness_from(dir, &recipe);
     let err = run_pack_recipe(&h.recipe_path, Some(&h.registry_path), None).unwrap_err();
-    assert!(err.contains("inputs.source_manifest"), "{}", err);
+    assert!(err.contains("source_manifest"), "{}", err);
 }
 
 #[test]

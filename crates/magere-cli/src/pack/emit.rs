@@ -2,11 +2,11 @@
 
 use super::SKELETON_NOTICE;
 use super::io::PackStats;
-use super::recipe::PackRecipe;
 use crate::manifest::{
     BackendStatus, Checksum, GeneratedArtifact, Manifest, Metadata, Quantization, SourceLineage,
     TensorSummary,
 };
+use crate::recipe::Recipe;
 use magere_grok_process::types::GOZ1_VERSION;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -22,7 +22,7 @@ pub(super) struct DissectInput {
 
 /// Inputs for [`build_generated_manifest`].
 pub(super) struct GeneratedManifestSpec<'a> {
-    pub recipe: &'a PackRecipe,
+    pub recipe: &'a Recipe,
     pub source: &'a Manifest,
     pub manifest_id: String,
     pub pack_path: &'a Path,
@@ -76,7 +76,7 @@ pub(super) fn build_generated_manifest(spec: GeneratedManifestSpec<'_>) -> Manif
     }
 }
 
-fn manifest_description(recipe: &PackRecipe) -> String {
+fn manifest_description(recipe: &Recipe) -> String {
     let recipe_note = match &recipe.description {
         Some(description) => format!(" Recipe description: {}", description),
         None => String::new(),

@@ -23,7 +23,7 @@ pub(super) fn reference_escapes_upward(reference: &str) -> bool {
 ///
 /// Used before joining a caller-controlled identifier onto an output directory
 /// so `../x` or `/tmp/x` cannot escape that directory.
-pub(super) fn is_filename_safe_id(id: &str) -> bool {
+pub(crate) fn is_filename_safe_id(id: &str) -> bool {
     if id.is_empty() || id.contains('/') || id.contains('\\') {
         return false;
     }
@@ -41,7 +41,7 @@ fn is_repo_root(dir: &Path) -> bool {
     dir.join(".git").exists() || dir.join("Cargo.lock").is_file()
 }
 
-pub(super) fn validate_against_schema(instance: &Value) -> Result<(), String> {
+pub(crate) fn validate_against_schema(instance: &Value) -> Result<(), String> {
     let schema: Value = serde_json::from_str(RECIPE_SCHEMA)
         .map_err(|e| format!("embedded recipe schema is not valid JSON: {e}"))?;
 
@@ -100,7 +100,8 @@ impl Recipe {
         if !reference_is_manifest_path(reference) {
             return Err(format!(
                 "{label} '{reference}' must name a manifest path ending in '.json'; \
-                 registry-id references are not resolvable yet (see issues #19/#8)"
+                 `magere recipe validate` does not resolve registry ids. `magere pack-goz1` \
+                 looks a slug or manifest_id up in the selected registry"
             ));
         }
 

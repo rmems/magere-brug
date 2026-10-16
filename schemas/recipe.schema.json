@@ -100,7 +100,7 @@
       "description": "Input references for the recipe",
       "properties": {
         "source_manifest": {
-          "description": "Path to the source model manifest (a `*.json` path is resolved and parsed). Registry-id references are reserved for future support (issues #19/#8) and are rejected today.",
+          "description": "Source model manifest. A `*.json` path is resolved and parsed. `magere pack-goz1` also accepts a registry slug or manifest_id in the selected registry. `magere recipe validate` still requires a `.json` path, because that command has no registry.",
           "allOf": [
             {
               "$ref": "#/definitions/safe_string"

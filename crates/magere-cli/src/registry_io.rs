@@ -5,10 +5,10 @@
 //! the whole update so one command cannot replace a snapshot that missed the
 //! other's entry.
 
+use crate::atomic_write::write_bytes_atomically;
 use crate::registry::ArtifactRegistry;
 use fs4::FileExt;
 use std::fs::{File, OpenOptions};
-use std::io::Write;
 use std::path::{Path, PathBuf};
 
 /// Exclusive lock on `{registry}.lock`, held for a registry read-modify-write.
@@ -64,58 +64,6 @@ pub fn store_registry(registry: &ArtifactRegistry, registry_file: &Path) -> Resu
         .to_json_pretty()
         .map_err(|e| format!("Failed to serialize registry: {}", e))?;
     write_bytes_atomically(registry_file, registry_json.as_bytes())
-}
-
-/// Write `contents` to a unique temporary file in `dest`'s directory, flush it,
-/// then rename over `dest`.
-///
-/// The temporary name comes from [`tempfile::NamedTempFile`], created with
-/// exclusive create, so an existing recipe input is never truncated just
-/// because it happens to match a predictable `*.tmp` path.
-pub fn write_bytes_atomically(dest: &Path, contents: &[u8]) -> Result<(), String> {
-    let parent = dest
-        .parent()
-        .filter(|parent| !parent.as_os_str().is_empty())
-        .unwrap_or_else(|| Path::new("."));
-    if parent != Path::new(".") {
-        std::fs::create_dir_all(parent).map_err(|e| {
-            format!(
-                "Failed to create directory '{}' for '{}': {}",
-                parent.display(),
-                dest.display(),
-                e
-            )
-        })?;
-    }
-    let mut temporary = tempfile::NamedTempFile::new_in(parent).map_err(|e| {
-        format!(
-            "Failed to create temporary write for '{}': {}",
-            dest.display(),
-            e
-        )
-    })?;
-    temporary.write_all(contents).map_err(|e| {
-        format!(
-            "Failed to write temporary file for '{}': {}",
-            dest.display(),
-            e
-        )
-    })?;
-    temporary.as_file().sync_all().map_err(|e| {
-        format!(
-            "Failed to flush temporary file for '{}' to disk: {}",
-            dest.display(),
-            e
-        )
-    })?;
-    temporary.persist(dest).map_err(|e| {
-        format!(
-            "Failed to replace '{}' with the complete write: {}",
-            dest.display(),
-            e.error
-        )
-    })?;
-    Ok(())
 }
 
 fn lock_path(registry_file: &Path) -> PathBuf {

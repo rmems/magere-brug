@@ -11,7 +11,7 @@
 //! [`crate::saaq::run_saaq_command`]. Execution of the remaining types is
 //! deliberately not implemented here:
 //!
-//! - `goz1_pack` / `ternary_pack` -> issue #19 (`magere pack-goz1`)
+//! - `goz1_pack` / `ternary_pack` -> `magere pack-goz1` (this command only validates them)
 //! - `gguf_export` -> optional conversion placeholder; existing GGUF artifacts
 //!   are registered without conversion
 //!
@@ -22,6 +22,8 @@ mod apply_emit;
 mod resolve;
 mod summary;
 mod validate;
+
+pub(crate) use resolve::is_filename_safe_id;
 
 use clap::Subcommand;
 use serde::{Deserialize, Serialize};
@@ -84,9 +86,9 @@ pub enum RecipeCommands {
 pub enum RecipeType {
     /// Register an existing source artifact (GGUF, safetensors, HF repo, local dir).
     Register,
-    /// Pack a source into a GOZ1 artifact. Runner: issue #19.
+    /// Pack a source into a GOZ1 artifact. Runner: `magere pack-goz1`.
     Goz1Pack,
-    /// Ternary weight pack (normally emitted as GOZ1). Runner: issue #19.
+    /// Ternary weight pack (normally emitted as GOZ1). Runner: `magere pack-goz1`.
     TernaryPack,
     /// Optional GGUF conversion from a safetensors/HF/local-dir source. Placeholder.
     GgufExport,
@@ -105,7 +107,7 @@ impl RecipeType {
         }
     }
 
-    fn is_pack(&self) -> bool {
+    pub(crate) fn is_pack(&self) -> bool {
         matches!(self, RecipeType::Goz1Pack | RecipeType::TernaryPack)
     }
 }
@@ -288,6 +290,11 @@ impl Recipe {
         Ok(recipe)
     }
 
+    /// Remember which file this recipe was loaded from.
+    pub(crate) fn set_source_path(&mut self, path: &Path) {
+        self.source_path = Some(path.to_path_buf());
+    }
+
     /// Load a recipe from a file. Relative references resolve against the recipe
     /// file's directory (and its ancestors) before falling back to cwd.
     pub fn from_file<P: AsRef<Path>>(path: P) -> Result<Self, Box<dyn std::error::Error>> {
@@ -330,13 +337,11 @@ impl Recipe {
         match self.recipe_type {
             RecipeType::Register => self.apply_register(registry_override),
             RecipeType::Goz1Pack => Err(format!(
-                "recipe '{}': goz1_pack execution is not implemented in this command \
-                 — see issue #19 (magere pack-goz1)",
+                "recipe '{}': goz1_pack is executed by `magere pack-goz1`, not `magere recipe apply`",
                 self.recipe_id
             )),
             RecipeType::TernaryPack => Err(format!(
-                "recipe '{}': ternary_pack execution is not implemented in this command \
-                 — see issue #19 (magere pack-goz1)",
+                "recipe '{}': ternary_pack is executed by `magere pack-goz1`, not `magere recipe apply`",
                 self.recipe_id
             )),
             RecipeType::GgufExport => Err(format!(
@@ -387,7 +392,7 @@ impl Recipe {
         match self.recipe_type {
             RecipeType::Register => "magere recipe apply (implemented here)",
             RecipeType::Goz1Pack | RecipeType::TernaryPack => {
-                "issue #19 (magere pack-goz1) — not implemented here"
+                "magere pack-goz1 (not via magere recipe apply)"
             }
             RecipeType::GgufExport => {
                 "optional GGUF conversion placeholder — register existing GGUF without conversion"

@@ -134,9 +134,11 @@ fn tracks_whether_input_dir_exists() {
 #[test]
 fn shipped_example_recipe_is_well_formed_and_runnable() {
     let recipe = load_pack_recipe(Path::new(EXAMPLE_RECIPE)).expect("example recipe parses");
-    assert_eq!(recipe.recipe_type, "ternary_pack");
+    assert_eq!(recipe.recipe_type, crate::recipe::RecipeType::TernaryPack);
     assert_eq!(
-        recipe.pack.as_ref().unwrap().input_format,
+        crate::pack::recipe::require_pack_config(&recipe)
+            .unwrap()
+            .input_format,
         Some(InputFormat::NpyDir)
     );
     let (source_manifest, dissect, source_family, dissect_family) = shipped_example_paths();
@@ -190,13 +192,13 @@ fn padded_manifest_id_agrees_between_filename_and_manifest() {
 }
 
 #[test]
-fn a_mixed_pack_and_saaq_recipe_still_loads() {
+fn a_pack_recipe_rejects_a_saaq_block() {
     let dir = TempDir::new().unwrap();
     let mut recipe = base_recipe(&dir.path().join("packs"));
     recipe["saaq"] = json!({ "snn_steps": 4 });
     let h = harness_from(dir, &recipe);
-    let parsed = load_pack_recipe(&h.recipe_path).expect("mixed recipe loads");
-    assert!(parsed.saaq.is_some());
+    let err = load_pack_recipe(&h.recipe_path).unwrap_err();
+    assert!(err.contains("saaq"), "{err}");
 }
 
 #[test]

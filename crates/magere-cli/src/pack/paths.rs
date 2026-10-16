@@ -1,7 +1,8 @@
 //! Output layout, path collision checks, and source-manifest resolution.
 
 use crate::manifest::Manifest;
-use crate::registry::{ArtifactRegistry, PACK_GOZ1_PRODUCER, RegistryEntry};
+use crate::recipe::{Recipe, is_filename_safe_id};
+use crate::registry::{ArtifactRegistry, RegistryEntry};
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
@@ -15,7 +16,7 @@ pub(super) struct OutputLayout {
 }
 
 pub(super) fn resolve_output_layout(
-    recipe: &super::recipe::PackRecipe,
+    recipe: &Recipe,
     source: &Manifest,
     output_dir_override: Option<&Path>,
 ) -> Result<OutputLayout, String> {
@@ -39,7 +40,7 @@ pub(super) fn resolve_output_layout(
         .as_ref()
         .and_then(|o| o.manifest_id.clone())
         .unwrap_or_else(|| format!("{}-goz1", source.metadata.manifest_id));
-    let manifest_id = file_stem_for(&manifest_id)?.to_string();
+    let manifest_id = filename_stem(&manifest_id)?.to_string();
     let pack_path = output_dir.join(format!("{}.goz1", manifest_id));
     let manifest_path = output_dir.join(format!("{}.manifest.json", manifest_id));
     Ok(OutputLayout {
@@ -52,7 +53,7 @@ pub(super) fn resolve_output_layout(
 
 /// Load the source manifest from a filesystem path or a registry slug / manifest_id.
 pub(super) fn resolve_source_manifest(
-    recipe: &super::recipe::PackRecipe,
+    recipe: &Recipe,
     registry: &ArtifactRegistry,
 ) -> Result<(PathBuf, Manifest), String> {
     let raw = recipe
@@ -114,19 +115,15 @@ fn looks_like_filesystem_path(raw: &str) -> bool {
     raw.contains('/') || raw.contains('\\') || raw.ends_with(".json")
 }
 
-/// Derive a filesystem-safe file stem from a manifest id.
-pub(super) fn file_stem_for(manifest_id: &str) -> Result<&str, String> {
+/// One filename component, using the same rule as other recipe output ids.
+fn filename_stem(manifest_id: &str) -> Result<&str, String> {
     let trimmed = manifest_id.trim();
-    if trimmed.is_empty() {
-        return Err("outputs.manifest_id must not be empty".to_string());
+    if is_filename_safe_id(trimmed) {
+        return Ok(trimmed);
     }
-    if trimmed.contains('/') || trimmed.contains('\\') || trimmed.contains("..") {
-        return Err(format!(
-            "outputs.manifest_id '{}' must not contain path separators or '..'",
-            manifest_id
-        ));
-    }
-    Ok(trimmed)
+    Err(format!(
+        "outputs.manifest_id '{manifest_id}' must be a single filename with no path separators or '..' segments"
+    ))
 }
 
 /// Refuse when a derived output path would overwrite a recipe input or the registry file.
@@ -200,38 +197,18 @@ fn paths_alias(left: &Path, right: &Path) -> bool {
     left == right || same_file::is_same_file(left, right).unwrap_or(false)
 }
 
-/// Decide whether this run may replace the slug it is about to write.
+/// Refuse when a derived output path would overwrite another registry entry's files.
 ///
-/// Returns `true` only for a replay of this runner's own planned skeleton.
-/// Every other slug, manifest-id, or output-path collision is refused before
-/// any pack bytes are written.
-pub(super) fn reject_registry_collisions(
+/// Slug and manifest-id ownership live on [`ArtifactRegistry::admit_pack`].
+pub(super) fn reject_output_aliases(
     registry: &ArtifactRegistry,
     slug: &str,
-    manifest_id: &str,
     pack_path: &Path,
     manifest_path: &Path,
-    will_register: bool,
-) -> Result<bool, String> {
-    let replace_own = match registry.models.get(slug) {
-        Some(existing) if will_register && own_planned_replay(existing, manifest_id) => true,
-        Some(existing) => {
-            return Err(slug_collision(existing, slug, pack_path, manifest_path));
-        }
-        None => false,
-    };
+) -> Result<(), String> {
     for entry in registry.models.values() {
         if entry.slug == slug {
             continue;
-        }
-        if entry.manifest_id == manifest_id {
-            return Err(format!(
-                "outputs.manifest_id '{manifest_id}' is already registered to slug '{}'. \
-                 Refusing to write:\n    {}\n    {}\n  Nothing was written.",
-                entry.slug,
-                pack_path.display(),
-                manifest_path.display()
-            ));
         }
         if entry_aliases_outputs(entry, pack_path, manifest_path)? {
             return Err(format!(
@@ -247,31 +224,7 @@ pub(super) fn reject_registry_collisions(
             ));
         }
     }
-    Ok(replace_own)
-}
-
-fn own_planned_replay(existing: &RegistryEntry, manifest_id: &str) -> bool {
-    existing.manifest_id == manifest_id
-        && existing.producer.as_deref() == Some(PACK_GOZ1_PRODUCER)
-        && existing.generated_status.as_deref() != Some("success")
-}
-
-fn slug_collision(
-    existing: &RegistryEntry,
-    slug: &str,
-    pack_path: &Path,
-    manifest_path: &Path,
-) -> String {
-    format!(
-        "model slug '{slug}' is already registered (manifest_id '{}', producer: {}). \
-         Refusing to write:\n    {}\n    {}\n  Nothing was written. The registry key is \
-         always `<source model slug>_goz1`; changing `outputs.manifest_id` cannot avoid \
-         this collision.",
-        existing.manifest_id,
-        existing.producer.as_deref().unwrap_or("unspecified"),
-        pack_path.display(),
-        manifest_path.display()
-    )
+    Ok(())
 }
 
 fn entry_aliases_outputs(

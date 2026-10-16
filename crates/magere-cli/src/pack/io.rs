@@ -1,6 +1,5 @@
-//! Durable writes and GOZ1 re-read verification.
+//! GOZ1 re-read verification.
 
-use crate::registry_io::write_bytes_atomically;
 use magere_grok_process::types::{GOZ1_MAGIC, GOZ1_VERSION};
 use magere_grok_process::weight_pack::{PackTensorEntry, TENSOR_F16, TENSOR_TERNARY, parse_pack};
 use std::path::Path;
@@ -14,19 +13,6 @@ pub(super) struct PackStats {
     pub f16_count: u32,
     pub ternary_count: u32,
     pub size_bytes: u64,
-}
-
-/// Write `contents` via a uniquely named temporary file and rename over `dest`.
-pub(super) fn write_atomically(dest: &Path, contents: &[u8]) -> Result<(), String> {
-    write_bytes_atomically(dest, contents)
-}
-
-/// Write the pack to a sibling temp file, flush it, then rename over the destination.
-///
-/// `File::create` on the destination itself would truncate a previous valid pack before
-/// the new bytes are fully on disk.
-pub(super) fn write_pack_durably(pack_path: &Path, bytes: &[u8]) -> Result<(), String> {
-    write_atomically(pack_path, bytes)
 }
 
 /// Re-read the pack from disk and prove it is exactly what we meant to write.

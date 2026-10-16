@@ -1,3 +1,4 @@
+mod atomic_write;
 mod checksum;
 mod manifest;
 mod pack;

@@ -1,5 +1,6 @@
 //! Recipe document types and load/validate for `magere pack-goz1`.
 
+use crate::recipe::{CalibrationConfig, Handoff, RecipeLineage};
 use magere_grok_process::types::InputFormat;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
@@ -28,6 +29,12 @@ pub struct PackRecipe {
     pub outputs: Option<RecipeOutputs>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pack: Option<PackConfig>,
+    /// Calibration declared by the schema. The skeleton packer records it and does not apply it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub calibration: Option<CalibrationConfig>,
+    /// Forward-declared handoff. Parsed so a schema-valid recipe loads; not executed here.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub handoff: Option<Handoff>,
     /// Runner block owned by `magere run-saaq`; parsed so mixed recipes load, never read here.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub saaq: Option<serde_json::Value>,
@@ -40,6 +47,8 @@ pub struct PackRecipe {
 pub struct RecipeInputs {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source_manifest: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_format: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub goz1_ref: Option<String>,
 }
@@ -57,6 +66,18 @@ pub struct RecipeOutputs {
     pub manifest_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub output_dir: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub artifact_path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub goz1_version: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub checksum_algorithm: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub register: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub registry_path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lineage: Option<RecipeLineage>,
 }
 
 /// The `pack` block: everything needed to build a [`QuantizeConfig`].

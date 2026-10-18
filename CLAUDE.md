@@ -43,7 +43,7 @@ Run fmt and clippy before committing; CI fails on either.
 - Cloud stubs in `configs/models/cloud/` must hold placeholder markers, never real credentials.
 - A schema change needs matching updates to `manifests/examples/` and `configs/`, since `manifest-validate.yml` checks all of them against the CLI.
 - Generated outputs (`artifacts/packs/*`, `artifacts/registry.json`, `artifacts/saaq/`, `artifacts/manifests/`, `artifacts/handoff/`) are gitignored. Do not commit them.
-- Source files do not use an SPDX header, so do not add one.
+- `magere-corinth-core` (`// SPDX-License-Identifier: Apache-2.0 OR MIT`) and `magere-grok-process` (`// SPDX-License-Identifier: GPL-3.0-or-later`) start every `.rs` file with an SPDX header; keep it on new files there. `magere-cli` and `magere-bridge` have none, so do not add one.
 
 ## Gotchas
 

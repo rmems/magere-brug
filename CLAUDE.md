@@ -7,7 +7,7 @@ base build commands are in `AGENTS.md` (imported above); do not duplicate them h
 
 ## Commands
 
-Run from the repo root. "Verified" means it ran successfully in a fresh checkout on Rust 1.97.0 (stable, Linux, CPU only).
+Run from the repo root. "Verified" means it ran successfully on Rust 1.97.0 (stable, Linux, CPU only).
 There is no `rust-toolchain.toml`; CI uses `dtolnay/rust-toolchain@stable`.
 
 | Command | Status |
@@ -38,7 +38,7 @@ Run fmt and clippy before committing; CI fails on either.
 
 ## Invariants and non-goals
 
-- `docs-check.yml` fails on a missing `README.md`, `docs/ARCHITECTURE.md`, or `schemas/model_manifest.schema.json`.
+- `docs-check.yml` fails when both `README.md` and `README` are missing, or when `docs/ARCHITECTURE.md` or `schemas/model_manifest.schema.json` is missing.
 - It also rejects absolute personal paths in `manifests/examples/*.json`, `configs/models/*.json`, `configs/models/cloud/*.json`, and `configs/recipes/*.json` (`/home/<user>/`, `/Users/<user>/`, `C:\Users\`), and `/home/<user>/` in `scripts/*.py`. Use generic paths like `/models/...`.
 - Cloud stubs in `configs/models/cloud/` must hold placeholder markers, never real credentials.
 - A schema change needs matching updates to `manifests/examples/` and `configs/`. `manifest-validate.yml` runs `magere validate` on the manifests and `magere recipe validate` on `configs/recipes/`, plus `scripts/validate_configs.py` (model configs and cloud stubs), `check_required_fields.py`, and `check_artifact_shape.py`. `docs-check.yml` only checks that both schema files are valid JSON.

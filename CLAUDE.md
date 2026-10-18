@@ -39,9 +39,9 @@ Run fmt and clippy before committing; CI fails on either.
 ## Invariants and non-goals
 
 - `docs-check.yml` fails on a missing `README.md`, `docs/ARCHITECTURE.md`, or `schemas/model_manifest.schema.json`.
-- It also rejects absolute home paths (`/home/<user>/`, `/Users/<user>/`) in `manifests/examples/`, `configs/`, and `scripts/*.py`. Use generic paths like `/models/...`.
+- It also rejects absolute personal paths in `manifests/examples/*.json`, `configs/models/*.json`, `configs/models/cloud/*.json`, and `configs/recipes/*.json` (`/home/<user>/`, `/Users/<user>/`, `C:\Users\`), and `/home/<user>/` in `scripts/*.py`. Use generic paths like `/models/...`.
 - Cloud stubs in `configs/models/cloud/` must hold placeholder markers, never real credentials.
-- A schema change needs matching updates to `manifests/examples/` and `configs/`, since `manifest-validate.yml` checks all of them against the CLI.
+- A schema change needs matching updates to `manifests/examples/` and `configs/`. `manifest-validate.yml` runs `magere validate` on the manifests and `magere recipe validate` on `configs/recipes/`, plus `scripts/validate_configs.py` (model configs and cloud stubs), `check_required_fields.py`, and `check_artifact_shape.py`. `docs-check.yml` only checks that both schema files are valid JSON.
 - Generated outputs (`artifacts/packs/*`, `artifacts/registry.json`, `artifacts/saaq/`, `artifacts/manifests/`, `artifacts/handoff/`) are gitignored. Do not commit them.
 - `magere-corinth-core` (`// SPDX-License-Identifier: Apache-2.0 OR MIT`) and `magere-grok-process` (`// SPDX-License-Identifier: GPL-3.0-or-later`) start every `.rs` file with an SPDX header; keep it on new files there. `magere-cli` and `magere-bridge` have none, so do not add one.
 

@@ -59,7 +59,7 @@ fn rejects_missing_source_manifest() {
     recipe["inputs"] = json!({});
     let h = harness_from(dir, &recipe);
     let err = run_pack_recipe(&h.recipe_path, Some(&h.registry_path), None).unwrap_err();
-    assert!(err.contains("inputs.source_manifest"), "{}", err);
+    assert!(err.contains("source_manifest"), "{}", err);
 }
 
 #[test]
@@ -254,6 +254,132 @@ fn gguf_source_needs_an_explicit_input_format() {
     let recipe_path = write_recipe(dir.path(), "gguf-explicit.json", &recipe);
     let outcome = run_pack_recipe(&recipe_path, Some(&registry_path), None).unwrap();
     assert_eq!(outcome.tensor_count, FIXTURE_TENSORS);
+}
+
+#[test]
+fn accepts_schema_fields_the_packer_records_without_applying_calibration() {
+    let dir = TempDir::new().unwrap();
+    let output_dir = dir.path().join("packs");
+    let registry_path = dir.path().join("declared-registry.json");
+    let mut recipe = base_recipe(&output_dir);
+    let pack_path = output_dir.join("test-pack-v1.goz1");
+    recipe["inputs"]["source_format"] = json!("local_dir");
+    recipe["outputs"]["registry_path"] = json!(registry_path.display().to_string());
+    recipe["outputs"]["goz1_version"] = json!(1);
+    recipe["outputs"]["checksum_algorithm"] = json!("sha256");
+    recipe["outputs"]["artifact_path"] = json!(pack_path.display().to_string());
+    recipe["outputs"]["lineage"] = json!({
+        "parent_manifest_id": "grok-1-future-plan-v1",
+        "recipe_id": "test-ternary-pack",
+        "parent_path": "/models/grok-1"
+    });
+    recipe["calibration"] = json!({
+        "dataset": "reasoning-1m",
+        "sample_count": 8,
+        "seed": 1
+    });
+    recipe["handoff"] = json!({
+        "combine_for_ai": { "enabled": false, "status": "placeholder" },
+        "corinth_canal": { "enabled": false, "status": "placeholder" },
+        "myelin_accelerator": { "enabled": false, "status": "placeholder" }
+    });
+    let recipe_path = write_recipe(dir.path(), "schema-fields.json", &recipe);
+    let outcome = run_pack_recipe(&recipe_path, None, None).unwrap();
+    assert_eq!(outcome.registry_path, registry_path);
+    assert!(outcome.calibration_declared);
+    assert!(outcome.registered);
+    assert!(registry_path.is_file());
+    let manifest = crate::manifest::Manifest::from_file(&outcome.manifest_path).unwrap();
+    assert!(manifest.quantization.unwrap().calibration_dataset.is_none());
+    let report = format_outcome(&outcome);
+    assert!(report.contains("not applied"));
+}
+
+#[test]
+fn rejects_a_source_format_that_disagrees_with_the_manifest() {
+    let dir = TempDir::new().unwrap();
+    let mut recipe = base_recipe(&dir.path().join("packs"));
+    recipe["inputs"]["source_format"] = json!("safetensors");
+    let h = harness_from(dir, &recipe);
+    let err = run_pack_recipe(&h.recipe_path, Some(&h.registry_path), None).unwrap_err();
+    assert!(err.contains("source_format"), "{}", err);
+    assert!(!h.output_dir.exists());
+}
+
+#[test]
+fn refuses_to_replace_a_finished_pack_that_shares_the_manifest_id() {
+    let h = default_harness();
+    let slug = "grok_1_future_goz1";
+    let registry = json!({
+        "version": 1,
+        "models": {
+            slug: {
+                "slug": slug,
+                "manifest_id": "test-pack-v1",
+                "family": "grok",
+                "status": "registered",
+                "registered_at": "2026-08-01T00:00:00Z",
+                "generated_status": "success",
+                "producer": "register"
+            }
+        }
+    });
+    fs::write(&h.registry_path, registry.to_string()).unwrap();
+    let err = run_pack_recipe(&h.recipe_path, Some(&h.registry_path), None).unwrap_err();
+    assert!(err.contains("already registered"), "{}", err);
+    assert!(err.contains("Nothing was written"), "{}", err);
+    assert!(!h.output_dir.join("test-pack-v1.goz1").exists());
+    let stored: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&h.registry_path).unwrap()).unwrap();
+    assert_eq!(
+        stored["models"]["grok_1_future_goz1"]["generated_status"],
+        json!("success")
+    );
+}
+
+#[test]
+fn refuses_a_shared_manifest_id_owned_by_another_slug() {
+    let h = default_harness();
+    fs::create_dir_all(&h.output_dir).unwrap();
+    let foreign_manifest = h.output_dir.join("test-pack-v1.manifest.json");
+    fs::write(&foreign_manifest, b"{}\n").unwrap();
+    let registry = json!({
+        "version": 1,
+        "models": {
+            "other_goz1": {
+                "slug": "other_goz1",
+                "manifest_id": "test-pack-v1",
+                "family": "grok",
+                "status": "registered",
+                "registered_at": "2026-08-01T00:00:00Z",
+                "manifest_path": foreign_manifest.display().to_string(),
+                "producer": "pack-goz1",
+                "generated_status": "planned"
+            }
+        }
+    });
+    fs::write(&h.registry_path, registry.to_string()).unwrap();
+    let sentinel = fs::read(&foreign_manifest).unwrap();
+    let err = run_pack_recipe(&h.recipe_path, Some(&h.registry_path), None).unwrap_err();
+    assert!(err.contains("already registered to slug"), "{}", err);
+    assert_eq!(fs::read(&foreign_manifest).unwrap(), sentinel);
+    assert!(!h.output_dir.join("test-pack-v1.goz1").exists());
+}
+
+#[test]
+fn a_predictable_temp_name_does_not_truncate_an_input() {
+    let dir = TempDir::new().unwrap();
+    let output_dir = dir.path().join("packs");
+    fs::create_dir_all(&output_dir).unwrap();
+    let decoy = output_dir.join(".test-pack-v1.goz1.tmp");
+    fs::copy(FIXTURE_DISSECT, &decoy).unwrap();
+    let before = fs::read(&decoy).unwrap();
+    let mut recipe = base_recipe(&output_dir);
+    recipe["pack"]["dissect_manifest"] = json!(decoy.display().to_string());
+    let h = harness_from(dir, &recipe);
+    run_pack_recipe(&h.recipe_path, Some(&h.registry_path), None).unwrap();
+    assert_eq!(fs::read(&decoy).unwrap(), before);
+    assert!(h.output_dir.join("test-pack-v1.goz1").is_file());
 }
 
 #[test]

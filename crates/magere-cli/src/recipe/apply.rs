@@ -9,7 +9,6 @@ use super::{
 use crate::manifest::{GeneratedArtifact, Manifest};
 use crate::registry::ArtifactRegistry;
 use serde_json::{Value, json};
-use std::io::Write;
 use std::path::{Path, PathBuf};
 
 struct RegisterSource {
@@ -25,10 +24,11 @@ impl Recipe {
     ) -> Result<String, String> {
         let source = self.load_register_source()?;
         let registry_path = self.registry_destination(registry_override);
-        let serialized_registry = prepare_registry_update(&source.manifest, &registry_path)?;
+        let _lock = crate::registry_io::RegistryLock::acquire(&registry_path)?;
+        let registry = prepare_registry_update(&source.manifest, &registry_path)?;
         let (emitted_manifest, emitted_handoff) =
             self.emit_registered_artifacts(&source, &registry_path)?;
-        write_registry(&serialized_registry, &registry_path)?;
+        crate::registry_io::store_registry(&registry, &registry_path)?;
         Ok(format_register_report(
             self,
             &source.manifest,
@@ -169,85 +169,21 @@ fn require_registration_requested(recipe: &Recipe) -> Result<(), String> {
     }
 }
 
-fn prepare_registry_update(manifest: &Manifest, registry_path: &Path) -> Result<String, String> {
-    let mut registry = load_registry(registry_path)?;
-    if let Some(owner) = registry.models.values().find(|entry| {
-        entry.manifest_id == manifest.metadata.manifest_id && entry.slug != manifest.model.slug
-    }) {
+fn prepare_registry_update(
+    manifest: &Manifest,
+    registry_path: &Path,
+) -> Result<ArtifactRegistry, String> {
+    let mut registry = crate::registry_io::load_registry(registry_path)?;
+    if let Some(owner) =
+        registry.conflicting_manifest_owner(&manifest.metadata.manifest_id, &manifest.model.slug)
+    {
         return Err(format!(
             "manifest_id '{}' is already registered to model slug '{}'; cannot assign it to '{}'",
             manifest.metadata.manifest_id, owner.slug, manifest.model.slug
         ));
     }
     registry.register_or_update(manifest)?;
-    registry
-        .to_json_pretty()
-        .map_err(|e| format!("failed to serialize registry: {e}"))
-}
-
-fn write_registry(serialized: &str, registry_path: &Path) -> Result<(), String> {
-    ensure_parent_dir(registry_path)?;
-    let parent = registry_path
-        .parent()
-        .filter(|parent| !parent.as_os_str().is_empty())
-        .unwrap_or_else(|| Path::new("."));
-    let mut temporary = tempfile::NamedTempFile::new_in(parent).map_err(|e| {
-        format!(
-            "failed to create temporary registry beside {}: {e}",
-            registry_path.display()
-        )
-    })?;
-    temporary.write_all(serialized.as_bytes()).map_err(|e| {
-        format!(
-            "failed to write temporary registry for {}: {e}",
-            registry_path.display()
-        )
-    })?;
-    temporary.flush().map_err(|e| {
-        format!(
-            "failed to flush temporary registry for {}: {e}",
-            registry_path.display()
-        )
-    })?;
-    temporary.as_file().sync_all().map_err(|e| {
-        format!(
-            "failed to sync temporary registry for {}: {e}",
-            registry_path.display()
-        )
-    })?;
-    temporary.persist(registry_path).map_err(|e| {
-        format!(
-            "failed to replace registry {} atomically: {}",
-            registry_path.display(),
-            e.error
-        )
-    })?;
-    Ok(())
-}
-
-fn load_registry(registry_path: &Path) -> Result<ArtifactRegistry, String> {
-    if !registry_path.exists() {
-        return Ok(ArtifactRegistry::new());
-    }
-    let content = std::fs::read_to_string(registry_path)
-        .map_err(|e| format!("failed to read registry {}: {e}", registry_path.display()))?;
-    ArtifactRegistry::from_json(&content)
-        .map_err(|e| format!("failed to parse registry {}: {e}", registry_path.display()))
-}
-
-fn ensure_parent_dir(path: &Path) -> Result<(), String> {
-    let Some(parent) = path.parent() else {
-        return Ok(());
-    };
-    if parent.as_os_str().is_empty() {
-        return Ok(());
-    }
-    std::fs::create_dir_all(parent).map_err(|e| {
-        format!(
-            "failed to create registry directory {}: {e}",
-            parent.display()
-        )
-    })
+    Ok(registry)
 }
 
 fn combine_handoff_payload(recipe: &Recipe, manifest: &Manifest, emitted_manifest: &Path) -> Value {

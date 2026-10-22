@@ -129,7 +129,35 @@ impl Recipe {
         Ok(())
     }
 
-    fn validate_pack_lineage(&self, manifest: &Manifest) -> Result<(), String> {
+    /// Schema gate shared with runners that load a recipe file themselves.
+    pub(crate) fn validate_schema_document(&self) -> Result<(), String> {
+        let Some(instance) = &self.source_json else {
+            return Err("recipe has no source document to validate".to_string());
+        };
+        crate::saaq::reject_explicit_nulls(instance, "")?;
+        super::resolve::validate_against_schema(instance)
+    }
+
+    /// Shared source checks for `pack-goz1` after it has loaded the source manifest.
+    ///
+    /// `resolved_input_dir` is an extra parent path the packer accepts, because
+    /// `pack.input_dir` can name the bytes that were fed in place of
+    /// `source_artifact.path`. `magere recipe validate` does not pass that override.
+    pub(crate) fn check_pack_source(
+        &self,
+        manifest: &Manifest,
+        resolved_input_dir: &str,
+    ) -> Result<(), String> {
+        self.assert_declared_source_format(manifest)?;
+        self.validate_outputs()?;
+        self.validate_pack_lineage_against(manifest, Some(resolved_input_dir))
+    }
+
+    fn validate_pack_lineage_against(
+        &self,
+        manifest: &Manifest,
+        also_parent_path: Option<&str>,
+    ) -> Result<(), String> {
         let Some(lineage) = self
             .outputs
             .as_ref()
@@ -148,12 +176,20 @@ impl Recipe {
         }
         if let Some(parent_path) = lineage.parent_path.as_deref()
             && parent_path != manifest.source_artifact.path
+            && also_parent_path != Some(parent_path)
         {
-            return Err(format!(
-                "outputs.lineage.parent_path '{parent_path}' does not match the referenced \
-                 manifest's source_artifact.path '{}'",
-                manifest.source_artifact.path
-            ));
+            return Err(match also_parent_path {
+                Some(input_dir) => format!(
+                    "outputs.lineage.parent_path '{parent_path}' matches neither the source \
+                     artifact path '{}' nor the resolved pack input_dir '{input_dir}'",
+                    manifest.source_artifact.path
+                ),
+                None => format!(
+                    "outputs.lineage.parent_path '{parent_path}' does not match the referenced \
+                     manifest's source_artifact.path '{}'",
+                    manifest.source_artifact.path
+                ),
+            });
         }
         Ok(())
     }
@@ -314,7 +350,7 @@ impl Recipe {
     fn validate_typed_source_constraints(&self, manifest: &Manifest) -> Result<(), String> {
         if self.recipe_type.is_pack() {
             self.reject_unpackable_source_format(&manifest.source_artifact.format)?;
-            self.validate_pack_lineage(manifest)?;
+            self.validate_pack_lineage_against(manifest, None)?;
         }
         if self.recipe_type == RecipeType::GgufExport {
             self.reject_unexportable_source_format(&manifest.source_artifact.format)?;

@@ -74,12 +74,16 @@ fn a_foreign_registry_entry_is_not_displaced_by_a_new_pack() {
     assert!(err.contains("test-pack-v2.goz1"), "{}", err);
     assert!(err.contains("test-pack-v2.manifest.json"), "{}", err);
     assert!(err.contains("<source model slug>_goz1"), "{}", err);
+    assert!(err.contains("Nothing was written"), "{}", err);
     assert!(
         !err.contains("set a different `outputs.manifest_id`"),
         "{}",
         err
     );
-    assert!(h.output_dir.join("test-pack-v2.goz1").exists());
+    assert!(
+        !h.output_dir.join("test-pack-v2.goz1").exists(),
+        "a slug collision must be refused before the pack is written"
+    );
 
     let registry =
         ArtifactRegistry::from_json(&fs::read_to_string(&h.registry_path).unwrap()).unwrap();
@@ -130,9 +134,11 @@ fn tracks_whether_input_dir_exists() {
 #[test]
 fn shipped_example_recipe_is_well_formed_and_runnable() {
     let recipe = load_pack_recipe(Path::new(EXAMPLE_RECIPE)).expect("example recipe parses");
-    assert_eq!(recipe.recipe_type, "ternary_pack");
+    assert_eq!(recipe.recipe_type, crate::recipe::RecipeType::TernaryPack);
     assert_eq!(
-        recipe.pack.as_ref().unwrap().input_format,
+        crate::pack::recipe::require_pack_config(&recipe)
+            .unwrap()
+            .input_format,
         Some(InputFormat::NpyDir)
     );
     let (source_manifest, dissect, source_family, dissect_family) = shipped_example_paths();
@@ -186,13 +192,13 @@ fn padded_manifest_id_agrees_between_filename_and_manifest() {
 }
 
 #[test]
-fn a_mixed_pack_and_saaq_recipe_still_loads() {
+fn a_pack_recipe_rejects_a_saaq_block() {
     let dir = TempDir::new().unwrap();
     let mut recipe = base_recipe(&dir.path().join("packs"));
     recipe["saaq"] = json!({ "snn_steps": 4 });
     let h = harness_from(dir, &recipe);
-    let parsed = load_pack_recipe(&h.recipe_path).expect("mixed recipe loads");
-    assert!(parsed.saaq.is_some());
+    let err = load_pack_recipe(&h.recipe_path).unwrap_err();
+    assert!(err.contains("saaq"), "{err}");
 }
 
 #[test]

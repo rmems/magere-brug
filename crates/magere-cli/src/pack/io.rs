@@ -1,10 +1,8 @@
-//! Durable writes and GOZ1 re-read verification.
+//! GOZ1 re-read verification.
 
 use magere_grok_process::types::{GOZ1_MAGIC, GOZ1_VERSION};
 use magere_grok_process::weight_pack::{PackTensorEntry, TENSOR_F16, TENSOR_TERNARY, parse_pack};
-use std::fs::File;
-use std::io::Write;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 /// Facts about the pack file on disk, derived by reading it back after the write.
 #[derive(Debug, Clone, Copy)]
@@ -15,29 +13,6 @@ pub(super) struct PackStats {
     pub f16_count: u32,
     pub ternary_count: u32,
     pub size_bytes: u64,
-}
-
-/// Write `contents` next to `dest` and rename over it only after a full flush.
-pub(super) fn write_atomically(dest: &Path, contents: &[u8]) -> Result<(), String> {
-    let tmp = sibling_temp(dest)?;
-    write_and_sync(&tmp, contents, dest)?;
-    std::fs::rename(&tmp, dest).map_err(|e| {
-        let _ = std::fs::remove_file(&tmp);
-        format!(
-            "Failed to replace '{}' with the complete write: {}",
-            dest.display(),
-            e
-        )
-    })?;
-    Ok(())
-}
-
-/// Write the pack to a sibling temp file, flush it, then rename over the destination.
-///
-/// `File::create` on the destination itself would truncate a previous valid pack before
-/// the new bytes are fully on disk.
-pub(super) fn write_pack_durably(pack_path: &Path, bytes: &[u8]) -> Result<(), String> {
-    write_atomically(pack_path, bytes)
 }
 
 /// Re-read the pack from disk and prove it is exactly what we meant to write.
@@ -69,40 +44,6 @@ pub(super) fn verify_written_pack(pack_path: &Path, expected: &[u8]) -> Result<P
         f16_count,
         ternary_count,
         size_bytes: written.len() as u64,
-    })
-}
-
-fn sibling_temp(dest: &Path) -> Result<PathBuf, String> {
-    let name = dest.file_name().ok_or_else(|| {
-        format!(
-            "output path '{}' has no file name for an atomic write",
-            dest.display()
-        )
-    })?;
-    Ok(dest.with_file_name(format!(".{}.tmp", name.to_string_lossy())))
-}
-
-fn write_and_sync(tmp: &Path, contents: &[u8], dest: &Path) -> Result<(), String> {
-    let mut file = File::create(tmp).map_err(|e| {
-        format!(
-            "Failed to create temporary write for '{}': {}",
-            dest.display(),
-            e
-        )
-    })?;
-    file.write_all(contents).map_err(|e| {
-        format!(
-            "Failed to write temporary file for '{}': {}",
-            dest.display(),
-            e
-        )
-    })?;
-    file.sync_all().map_err(|e| {
-        format!(
-            "Failed to flush temporary file for '{}' to disk: {}",
-            dest.display(),
-            e
-        )
     })
 }
 

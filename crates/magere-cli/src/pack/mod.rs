@@ -23,21 +23,21 @@ mod emit;
 mod io;
 mod paths;
 mod recipe;
-mod registry_lock;
 
-pub use recipe::{PackRecipe, load_pack_recipe};
+pub use recipe::load_pack_recipe;
 
+use crate::atomic_write::write_bytes_atomically;
 use crate::checksum;
 use crate::manifest::Manifest;
-use crate::registry::ArtifactRegistry;
+use crate::recipe::Recipe;
+use crate::registry::{ArtifactRegistry, PACK_GOZ1_PRODUCER, PackAdmission, ProducedRegistration};
+use crate::registry_io::{self, RegistryLock};
 use emit::{DissectInput, GeneratedManifestSpec, build_generated_manifest, format_outcome};
-use io::{write_atomically, write_pack_durably};
 use magere_grok_process::manifest::{DissectManifest, load_manifest};
 use magere_grok_process::stream::run_quantize;
 use magere_grok_process::types::QuantizeConfig;
 use paths::{OutputLayout, reject_aliased_outputs, resolve_output_layout, resolve_source_manifest};
-use recipe::{input_format_for, require_pack_config};
-use registry_lock::{RegistryLock, load_registry};
+use recipe::{PackConfig, input_format_for, require_pack_config};
 use std::path::{Path, PathBuf};
 
 /// Verbatim notice recorded on every artifact this runner produces.
@@ -61,11 +61,15 @@ pub struct PackOutcome {
     /// True when `input_dir` does not exist on disk. Harmless today — the skeleton packer
     /// never reads it — but it will matter once real tensor loading lands.
     pub input_dir_missing: bool,
+    /// True when the recipe declared `calibration`. The skeleton packer does not apply it.
+    pub calibration_declared: bool,
+    /// True when the registry was updated. `outputs.register: false` leaves it unchanged.
+    pub registered: bool,
 }
 
 /// Inputs gathered before any pack or registry write.
 struct PreparedPack {
-    recipe: PackRecipe,
+    recipe: Recipe,
     registry_file: PathBuf,
     _lock: RegistryLock,
     registry: ArtifactRegistry,
@@ -75,6 +79,9 @@ struct PreparedPack {
     quantize_config: QuantizeConfig,
     dissect: DissectManifest,
     dissect_input: DissectInput,
+    admission: PackAdmission,
+    will_register: bool,
+    calibration_declared: bool,
 }
 
 /// CLI entry point: run the recipe and render a human-readable report.
@@ -118,30 +125,26 @@ fn prepare_pack_run(
 fn load_recipe_and_registry(
     recipe_path: &Path,
     registry_path: Option<&Path>,
-) -> Result<
-    (
-        PackRecipe,
-        recipe::PackConfig,
-        PathBuf,
-        RegistryLock,
-        ArtifactRegistry,
-    ),
-    String,
-> {
+) -> Result<(Recipe, PackConfig, PathBuf, RegistryLock, ArtifactRegistry), String> {
     let recipe = load_pack_recipe(recipe_path)?;
-    let pack_config = require_pack_config(&recipe)?.clone();
-    let registry_file = registry_path
-        .unwrap_or_else(|| Path::new("registry.json"))
-        .to_path_buf();
+    let pack_config = require_pack_config(&recipe)?;
+    let registry_file = registry_path.map(Path::to_path_buf).unwrap_or_else(|| {
+        recipe
+            .outputs
+            .as_ref()
+            .and_then(|outputs| outputs.registry_path.as_deref())
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from("registry.json"))
+    });
     let lock = RegistryLock::acquire(&registry_file)?;
-    let registry = load_registry(&registry_file)?;
+    let registry = registry_io::load_registry(&registry_file)?;
     Ok((recipe, pack_config, registry_file, lock, registry))
 }
 
 fn bind_inputs_and_outputs(
     recipe_path: &Path,
-    recipe: PackRecipe,
-    pack_config: recipe::PackConfig,
+    recipe: Recipe,
+    pack_config: PackConfig,
     registry_file: PathBuf,
     lock: RegistryLock,
     registry: ArtifactRegistry,
@@ -156,6 +159,24 @@ fn bind_inputs_and_outputs(
         &dissect,
         pack_config.allow_model_mismatch.unwrap_or(false),
     )?;
+    let will_register = recipe
+        .outputs
+        .as_ref()
+        .and_then(|outputs| outputs.register)
+        .unwrap_or(true);
+    let slug = format!("{}_goz1", source.model.slug);
+    let admission = admit_registry_write(
+        &registry,
+        &slug,
+        &layout.manifest_id,
+        &layout.pack_path,
+        &layout.manifest_path,
+        will_register,
+    )?;
+    paths::reject_output_aliases(&registry, &slug, &layout.pack_path, &layout.manifest_path)?;
+    recipe.check_pack_source(&source, &input_dir)?;
+    check_artifact_path(&recipe, &layout)?;
+    let calibration_declared = recipe.calibration.is_some();
     create_outputs_if_safe(
         recipe_path,
         &source_path,
@@ -174,6 +195,9 @@ fn bind_inputs_and_outputs(
         quantize_config,
         dissect,
         dissect_input,
+        admission,
+        will_register,
+        calibration_declared,
     })
 }
 
@@ -213,11 +237,13 @@ fn execute_pack_run(prepared: PreparedPack) -> Result<PackOutcome, String> {
         quantize_config,
         dissect,
         dissect_input,
-        ..
+        admission,
+        will_register,
+        calibration_declared,
     } = prepared;
     let bytes =
         run_quantize(&quantize_config, &dissect).map_err(|e| format!("GOZ1 pack failed: {}", e))?;
-    write_pack_durably(&layout.pack_path, &bytes)?;
+    write_bytes_atomically(&layout.pack_path, &bytes)?;
     let stats = io::verify_written_pack(&layout.pack_path, &bytes)?;
     let sha256 = checksum::compute_file_sha256(&layout.pack_path)
         .map_err(|e| format!("Failed to checksum '{}': {}", layout.pack_path.display(), e))?;
@@ -232,9 +258,19 @@ fn execute_pack_run(prepared: PreparedPack) -> Result<PackOutcome, String> {
         resolved_input_dir: &input_dir,
     });
     write_emitted_manifest(&emitted, &layout.manifest_path)?;
-    let registry_replaced = take_own_registry_entry(&mut registry, &emitted);
-    register_emitted(&mut registry, &emitted, &layout)?;
-    persist_registry(&registry, &registry_file)?;
+    let registry_replaced = if will_register {
+        register_emitted(
+            &mut registry,
+            &emitted,
+            &layout,
+            &recipe.recipe_id,
+            admission,
+        )?;
+        persist_registry(&registry, &registry_file)?;
+        admission == PackAdmission::ReplaceOwnPlanned
+    } else {
+        false
+    };
     Ok(PackOutcome {
         recipe_id: recipe.recipe_id,
         pack_path: layout.pack_path,
@@ -248,11 +284,53 @@ fn execute_pack_run(prepared: PreparedPack) -> Result<PackOutcome, String> {
         manifest: emitted,
         registry_replaced,
         input_dir_missing: !Path::new(&input_dir).exists(),
+        calibration_declared,
+        registered: will_register,
     })
 }
 
+fn admit_registry_write(
+    registry: &ArtifactRegistry,
+    slug: &str,
+    manifest_id: &str,
+    pack_path: &Path,
+    manifest_path: &Path,
+    will_register: bool,
+) -> Result<PackAdmission, String> {
+    registry
+        .admit_pack(slug, manifest_id, will_register)
+        .map_err(|reason| {
+            format!(
+                "{reason}\n  Refusing to write:\n    {}\n    {}\n  Nothing was written.",
+                pack_path.display(),
+                manifest_path.display()
+            )
+        })
+}
+
+fn check_artifact_path(recipe: &Recipe, layout: &OutputLayout) -> Result<(), String> {
+    let Some(artifact_path) = recipe
+        .outputs
+        .as_ref()
+        .and_then(|outputs| outputs.artifact_path.as_deref())
+    else {
+        return Ok(());
+    };
+    let declared = paths::resolve_planned_path(Path::new(artifact_path))?;
+    let derived = paths::resolve_planned_path(&layout.pack_path)?;
+    if declared != derived {
+        return Err(format!(
+            "outputs.artifact_path '{}' does not match the pack path derived from \
+             output_dir and manifest_id ('{}')",
+            artifact_path,
+            layout.pack_path.display()
+        ));
+    }
+    Ok(())
+}
+
 fn quantize_config_from(
-    pack_config: &recipe::PackConfig,
+    pack_config: &PackConfig,
     source: &Manifest,
     layout: &OutputLayout,
 ) -> Result<(QuantizeConfig, String), String> {
@@ -279,7 +357,7 @@ fn quantize_config_from(
     ))
 }
 
-fn gif_threshold_from(pack_config: &recipe::PackConfig) -> Result<f32, String> {
+fn gif_threshold_from(pack_config: &PackConfig) -> Result<f32, String> {
     match pack_config.gif_threshold {
         Some(threshold) if threshold.is_finite() && (0.0..=1.0).contains(&threshold) => {
             Ok(threshold)
@@ -292,9 +370,7 @@ fn gif_threshold_from(pack_config: &recipe::PackConfig) -> Result<f32, String> {
     }
 }
 
-fn load_dissect_input(
-    pack_config: &recipe::PackConfig,
-) -> Result<(DissectManifest, DissectInput), String> {
+fn load_dissect_input(pack_config: &PackConfig) -> Result<(DissectManifest, DissectInput), String> {
     let path = PathBuf::from(&pack_config.dissect_manifest);
     let dissect = load_manifest(&path).map_err(|e| {
         format!(
@@ -346,7 +422,7 @@ fn write_emitted_manifest(emitted: &Manifest, manifest_path: &Path) -> Result<()
         .map_err(|e| format!("emitted manifest is invalid: {}", e))?;
     let serialized = serde_json::to_string_pretty(emitted)
         .map_err(|e| format!("Failed to serialize emitted manifest: {}", e))?;
-    write_atomically(manifest_path, format!("{}\n", serialized).as_bytes()).map_err(|e| {
+    write_bytes_atomically(manifest_path, format!("{}\n", serialized).as_bytes()).map_err(|e| {
         format!(
             "Failed to write manifest '{}': {}",
             manifest_path.display(),
@@ -355,23 +431,28 @@ fn write_emitted_manifest(emitted: &Manifest, manifest_path: &Path) -> Result<()
     })
 }
 
-fn take_own_registry_entry(registry: &mut ArtifactRegistry, emitted: &Manifest) -> bool {
-    match registry.models.get(&emitted.model.slug) {
-        Some(existing) if existing.manifest_id == emitted.metadata.manifest_id => {
-            registry.models.remove(&emitted.model.slug);
-            true
-        }
-        _ => false,
-    }
-}
-
 fn register_emitted(
     registry: &mut ArtifactRegistry,
     emitted: &Manifest,
     layout: &OutputLayout,
+    recipe_id: &str,
+    admission: PackAdmission,
 ) -> Result<(), String> {
+    let generated_status = emitted
+        .generated_artifact
+        .as_ref()
+        .and_then(|artifact| artifact.status.as_deref());
     registry
-        .register_at(emitted, Some(&layout.manifest_path))
+        .commit_pack(
+            emitted,
+            ProducedRegistration {
+                manifest_path: &layout.manifest_path,
+                producer: PACK_GOZ1_PRODUCER,
+                generated_status,
+                recipe_id: Some(recipe_id),
+            },
+            admission,
+        )
         .map_err(|e| {
             format!(
                 "{}\n  note: the pack and manifest were already written before this collision was \
@@ -388,11 +469,7 @@ fn register_emitted(
 }
 
 fn persist_registry(registry: &ArtifactRegistry, registry_file: &Path) -> Result<(), String> {
-    let registry_json = registry
-        .to_json_pretty()
-        .map_err(|e| format!("Failed to serialize registry: {}", e))?;
-    write_atomically(registry_file, registry_json.as_bytes())
-        .map_err(|e| format!("Failed to write registry: {}", e))
+    registry_io::store_registry(registry, registry_file)
 }
 
 #[cfg(test)]

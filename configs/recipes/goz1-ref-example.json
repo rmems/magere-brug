@@ -1,7 +1,7 @@
 {
   "recipe_id": "olmoe-goz1-ref-example",
   "type": "goz1_pack",
-  "description": "Reference-only recipe: packs the safetensors source recorded in goz1-pack-example.json and expects the GOZ1 pack that same manifest carries. Packing CLI is issue #19.",
+  "description": "Reference-only recipe: points at a source manifest and an existing GOZ1 pack, with no `pack` block. It validates under the recipe pipeline but is not executable by `magere pack-goz1` (that command requires a `pack` block). Use configs/recipes/ternary-pack-example.json for a runnable pack.",
   "inputs": {
     "source_manifest": "manifests/examples/goz1-pack-example.json",
     "goz1_ref": "manifests/examples/goz1-pack-example.json",

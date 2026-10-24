@@ -1,0 +1,45 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+# Draft CodeRabbit config for rmems/magere-brug (generated locally, not pushed).
+language: en-US
+reviews:
+  profile: chill
+  request_changes_workflow: false
+  fail_commit_status: false
+  auto_review:
+    enabled: true
+    drafts: false
+  path_filters:
+  - '!**/target/**'
+  - '!artifacts/**'
+  - '!reports/**'
+  - '!**/__pycache__/**'
+  path_instructions:
+  - path: crates/**/*.rs
+    instructions: 'Rust edition 2024; no `rust-version`; CI uses stable. Do not suggest downgrading the edition or using std/language APIs newer than the pinned toolchain/MSRV. CI gate: `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace`, `cargo build --release -p magere-cli`. Flag anything that would fail `cargo fmt --check` or clippy `-D warnings`.'
+  - path: crates/**/*.rs
+    instructions: Any `unsafe` (currently one occurrence in the workspace) needs a written safety justification; flag new `unsafe`.
+  - path: '**/Cargo.toml'
+    instructions: Cargo manifest. Call out new dependencies and feature changes, and keep `rust-version` / `edition` consistent with CI.
+  - path: scripts/**/*.py
+    instructions: 'Python >=3.10 (uv). CI gate: `cd scripts && uv sync --extra dev && uv run pytest tests/`. Keep code compatible with the declared Python floor.'
+  - path: '{manifests,schemas,configs}/**'
+    instructions: Manifests are validated against `schemas/` by the manifest-validate workflow; schema changes need matching example manifests.
+  - path: Dockerfile
+    instructions: Dockerfile. Keep secrets out of layers and build args, and keep toolchain versions in line with the CI pins.
+  - path: .github/workflows/**
+    instructions: GitHub Actions workflows. Keep `permissions:` least-privilege and job commands in sync with the local gates documented in the repo. `vultr-smoke` is manual-only and must stay `workflow_dispatch`.
+  tools:
+    clippy:
+      enabled: true
+    ruff:
+      enabled: true
+    hadolint:
+      enabled: true
+    actionlint:
+      enabled: true
+    yamllint:
+      enabled: true
+    markdownlint:
+      enabled: true
+    biome:
+      enabled: false

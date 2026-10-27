@@ -1,7 +1,8 @@
 //! Output layout, path collision checks, and source-manifest resolution.
 
 use crate::manifest::Manifest;
-use crate::registry::ArtifactRegistry;
+use crate::recipe::{Recipe, is_filename_safe_id};
+use crate::registry::{ArtifactRegistry, RegistryEntry};
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
@@ -15,7 +16,7 @@ pub(super) struct OutputLayout {
 }
 
 pub(super) fn resolve_output_layout(
-    recipe: &super::recipe::PackRecipe,
+    recipe: &Recipe,
     source: &Manifest,
     output_dir_override: Option<&Path>,
 ) -> Result<OutputLayout, String> {
@@ -39,7 +40,7 @@ pub(super) fn resolve_output_layout(
         .as_ref()
         .and_then(|o| o.manifest_id.clone())
         .unwrap_or_else(|| format!("{}-goz1", source.metadata.manifest_id));
-    let manifest_id = file_stem_for(&manifest_id)?.to_string();
+    let manifest_id = filename_stem(&manifest_id)?.to_string();
     let pack_path = output_dir.join(format!("{}.goz1", manifest_id));
     let manifest_path = output_dir.join(format!("{}.manifest.json", manifest_id));
     Ok(OutputLayout {
@@ -52,7 +53,7 @@ pub(super) fn resolve_output_layout(
 
 /// Load the source manifest from a filesystem path or a registry slug / manifest_id.
 pub(super) fn resolve_source_manifest(
-    recipe: &super::recipe::PackRecipe,
+    recipe: &Recipe,
     registry: &ArtifactRegistry,
 ) -> Result<(PathBuf, Manifest), String> {
     let raw = recipe
@@ -114,19 +115,15 @@ fn looks_like_filesystem_path(raw: &str) -> bool {
     raw.contains('/') || raw.contains('\\') || raw.ends_with(".json")
 }
 
-/// Derive a filesystem-safe file stem from a manifest id.
-pub(super) fn file_stem_for(manifest_id: &str) -> Result<&str, String> {
+/// One filename component, using the same rule as other recipe output ids.
+fn filename_stem(manifest_id: &str) -> Result<&str, String> {
     let trimmed = manifest_id.trim();
-    if trimmed.is_empty() {
-        return Err("outputs.manifest_id must not be empty".to_string());
+    if is_filename_safe_id(trimmed) {
+        return Ok(trimmed);
     }
-    if trimmed.contains('/') || trimmed.contains('\\') || trimmed.contains("..") {
-        return Err(format!(
-            "outputs.manifest_id '{}' must not contain path separators or '..'",
-            manifest_id
-        ));
-    }
-    Ok(trimmed)
+    Err(format!(
+        "outputs.manifest_id '{manifest_id}' must be a single filename with no path separators or '..' segments"
+    ))
 }
 
 /// Refuse when a derived output path would overwrite a recipe input or the registry file.
@@ -159,6 +156,10 @@ pub(super) fn reject_aliased_outputs(
 fn canonicalize_existing(path: &Path, kind: &str) -> Result<PathBuf, String> {
     std::fs::canonicalize(path)
         .map_err(|e| format!("Failed to resolve {kind} '{}': {}", path.display(), e))
+}
+
+pub(super) fn resolve_planned_path(path: &Path) -> Result<PathBuf, String> {
+    resolve_planned(path)
 }
 
 fn resolve_planned(path: &Path) -> Result<PathBuf, String> {
@@ -194,4 +195,58 @@ fn resolve_under_parent(path: &Path, parent: &Path, file_name: &OsStr) -> Result
 
 fn paths_alias(left: &Path, right: &Path) -> bool {
     left == right || same_file::is_same_file(left, right).unwrap_or(false)
+}
+
+/// Refuse when a derived output path would overwrite another registry entry's files.
+///
+/// Slug and manifest-id ownership live on [`ArtifactRegistry::admit_pack`].
+pub(super) fn reject_output_aliases(
+    registry: &ArtifactRegistry,
+    slug: &str,
+    pack_path: &Path,
+    manifest_path: &Path,
+) -> Result<(), String> {
+    for entry in registry.models.values() {
+        if entry.slug == slug {
+            continue;
+        }
+        if entry_aliases_outputs(entry, pack_path, manifest_path)? {
+            return Err(format!(
+                "output path '{}' collides with registry slug '{}' (manifest '{}'). \
+                 Nothing was written.",
+                pack_path.display(),
+                entry.slug,
+                entry
+                    .manifest_path
+                    .as_ref()
+                    .map(|path| path.display().to_string())
+                    .unwrap_or_else(|| entry.manifest_id.clone())
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn entry_aliases_outputs(
+    entry: &RegistryEntry,
+    pack_path: &Path,
+    manifest_path: &Path,
+) -> Result<bool, String> {
+    let Some(stored) = &entry.manifest_path else {
+        return Ok(false);
+    };
+    let ours = [resolve_planned(pack_path)?, resolve_planned(manifest_path)?];
+    let mut theirs = vec![resolve_planned(stored)?];
+    if let Some(pack) = sibling_goz1(stored) {
+        theirs.push(resolve_planned(&pack)?);
+    }
+    Ok(ours
+        .iter()
+        .any(|output| theirs.iter().any(|existing| paths_alias(output, existing))))
+}
+
+fn sibling_goz1(manifest: &Path) -> Option<PathBuf> {
+    let name = manifest.file_name()?.to_string_lossy();
+    let stem = name.strip_suffix(".manifest.json")?;
+    Some(manifest.with_file_name(format!("{stem}.goz1")))
 }

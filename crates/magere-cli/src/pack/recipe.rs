@@ -1,65 +1,14 @@
-//! Recipe document types and load/validate for `magere pack-goz1`.
+//! Pack-block decoding for `magere pack-goz1`.
+//!
+//! The recipe document is [`crate::recipe::Recipe`]. This module only decodes the
+//! `pack` object that the shared recipe stores as JSON.
 
+use crate::recipe::{Recipe, RecipeType};
 use magere_grok_process::types::InputFormat;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
-/// Recipe `type` values this runner accepts.
-pub(super) const PACK_RECIPE_TYPES: &[&str] = &["goz1_pack", "ternary_pack"];
-
-/// A recipe document as consumed by `magere pack-goz1`.
-///
-/// Strict like the inner blocks: a misspelled `outputs` or `inputs` would otherwise be
-/// ignored while this runner silently applies its defaults and registers an artifact under
-/// a name the recipe never asked for. The sibling `saaq` block is declared (and ignored) so
-/// a recipe file that declares both `pack` and `saaq` still loads; a future runner block
-/// must be added here alongside its schema entry.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct PackRecipe {
-    pub recipe_id: String,
-    #[serde(rename = "type")]
-    pub recipe_type: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub description: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub inputs: Option<RecipeInputs>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub outputs: Option<RecipeOutputs>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub pack: Option<PackConfig>,
-    /// Runner block owned by `magere run-saaq`; parsed so mixed recipes load, never read here.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub saaq: Option<serde_json::Value>,
-}
-
-/// Strict: the schema declares `additionalProperties: false` for this block, and the CLI does
-/// not schema-validate recipes, so serde is the only thing enforcing that contract.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct RecipeInputs {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub source_manifest: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub goz1_ref: Option<String>,
-}
-
-/// Strict, for the same reason as [`RecipeInputs`] -- and one sharper one: every field here
-/// has a silent fallback. A misspelled `manifest_ids` would otherwise be ignored and the run
-/// would quietly adopt the default identity `<source manifest id>-goz1`, writing and
-/// registering an artifact under a name the recipe never asked for.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct RecipeOutputs {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub generated_format: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub manifest_id: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub output_dir: Option<String>,
-}
-
-/// The `pack` block: everything needed to build a [`QuantizeConfig`].
+/// The `pack` block: everything needed to build a [`magere_grok_process::types::QuantizeConfig`].
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PackConfig {
@@ -81,29 +30,35 @@ pub struct PackConfig {
     pub allow_model_mismatch: Option<bool>,
 }
 
-/// Parse a recipe file and reject anything this runner cannot execute.
-pub fn load_pack_recipe(recipe_path: &Path) -> Result<PackRecipe, String> {
+/// Load a pack recipe through the shared recipe document and schema gate.
+pub fn load_pack_recipe(recipe_path: &Path) -> Result<Recipe, String> {
     let content = std::fs::read_to_string(recipe_path)
         .map_err(|e| format!("Failed to read recipe '{}': {}", recipe_path.display(), e))?;
-    let recipe: PackRecipe = serde_json::from_str(&content)
+    let mut recipe = Recipe::from_json(&content)
         .map_err(|e| format!("Failed to parse recipe '{}': {}", recipe_path.display(), e))?;
-
+    recipe.set_source_path(recipe_path);
     if recipe.recipe_id.trim().is_empty() {
         return Err(format!(
             "recipe '{}' is missing recipe_id",
             recipe_path.display()
         ));
     }
-    if !PACK_RECIPE_TYPES.contains(&recipe.recipe_type.as_str()) {
+    recipe
+        .validate_schema_document()
+        .map_err(|e| format!("Failed to parse recipe '{}': {}", recipe_path.display(), e))?;
+    if !matches!(
+        recipe.recipe_type,
+        RecipeType::Goz1Pack | RecipeType::TernaryPack
+    ) {
         return Err(format!(
-            "recipe '{}' has type '{}'; `pack-goz1` only runs {}",
-            recipe.recipe_id,
-            recipe.recipe_type,
-            PACK_RECIPE_TYPES.join(" or ")
+            "recipe '{}' has type '{}'; `pack-goz1` only runs goz1_pack or ternary_pack",
+            recipe.recipe_id, recipe.recipe_type
         ));
     }
-    if let Some(outputs) = &recipe.outputs
-        && let Some(format) = &outputs.generated_format
+    if let Some(format) = recipe
+        .outputs
+        .as_ref()
+        .and_then(|outputs| outputs.generated_format.as_deref())
         && format != "goz1"
     {
         return Err(format!(
@@ -111,14 +66,20 @@ pub fn load_pack_recipe(recipe_path: &Path) -> Result<PackRecipe, String> {
             recipe.recipe_id, format
         ));
     }
-
+    require_pack_config(&recipe)?;
     Ok(recipe)
 }
 
-pub(super) fn require_pack_config(recipe: &PackRecipe) -> Result<&PackConfig, String> {
-    recipe.pack.as_ref().ok_or_else(|| {
+pub(crate) fn require_pack_config(recipe: &Recipe) -> Result<PackConfig, String> {
+    let value = recipe.pack.clone().ok_or_else(|| {
         format!(
             "recipe '{}' has no `pack` block; `pack-goz1` needs one (see configs/recipes/ternary-pack-example.json)",
+            recipe.recipe_id
+        )
+    })?;
+    serde_json::from_value(value).map_err(|e| {
+        format!(
+            "recipe '{}' has an invalid `pack` block: {e}",
             recipe.recipe_id
         )
     })

@@ -167,7 +167,7 @@ fn test_apply_pack_types_name_owning_issue() {
         &sample_manifest_json("sample-v1", "sample_model", "safetensors"),
     );
     let err = recipe.apply(None).expect_err("must not execute");
-    assert!(err.contains("#19"), "unexpected error: {err}");
+    assert!(err.contains("pack-goz1"), "unexpected error: {err}");
 }
 
 #[test]
@@ -229,7 +229,7 @@ fn test_summary_reports_type_and_runner_owner() {
 
     let summary = recipe.summary();
     assert!(summary.contains("ternary_pack"), "{summary}");
-    assert!(summary.contains("#19"), "{summary}");
+    assert!(summary.contains("pack-goz1"), "{summary}");
     assert!(summary.contains("wikitext-2"), "{summary}");
     assert!(summary.contains("myelin_accelerator"), "{summary}");
 }

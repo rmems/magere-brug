@@ -383,6 +383,38 @@ fn a_predictable_temp_name_does_not_truncate_an_input() {
 }
 
 #[test]
+#[cfg(unix)]
+fn persist_failure_removes_written_pack_artifacts() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let h = default_harness();
+    run_pack_recipe(&h.recipe_path, Some(&h.registry_path), None).unwrap();
+    let pack = h.output_dir.join("test-pack-v1.goz1");
+    let manifest = h.output_dir.join("test-pack-v1.manifest.json");
+    assert!(pack.is_file());
+    assert!(manifest.is_file());
+
+    let registry_dir = h.registry_path.parent().unwrap();
+    let mut perms = fs::metadata(registry_dir).unwrap().permissions();
+    perms.set_mode(0o555);
+    fs::set_permissions(registry_dir, perms).unwrap();
+
+    let err = run_pack_recipe(&h.recipe_path, Some(&h.registry_path), None).unwrap_err();
+    assert!(
+        err.contains("Failed to write") || err.contains("Permission denied"),
+        "{err}"
+    );
+    assert!(
+        !pack.exists(),
+        "pack must be removed when registration cannot finish"
+    );
+    assert!(
+        !manifest.exists(),
+        "manifest must be removed when registration cannot finish"
+    );
+}
+
+#[test]
 fn rejects_a_dissect_manifest_for_a_different_model_family() {
     let dir = TempDir::new().unwrap();
     let mut recipe = base_recipe(&dir.path().join("packs"));

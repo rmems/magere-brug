@@ -66,7 +66,7 @@ pub(super) fn resolve_source_manifest(
                 recipe.recipe_id
             )
         })?;
-    let path = resolve_source_ref(raw, registry)?;
+    let path = resolve_source_ref(raw, recipe, registry)?;
     let source = Manifest::from_file(&path)
         .map_err(|e| format!("Failed to load source manifest '{}': {}", path.display(), e))?;
     source
@@ -75,16 +75,39 @@ pub(super) fn resolve_source_manifest(
     Ok((path, source))
 }
 
-fn resolve_source_ref(raw: &str, registry: &ArtifactRegistry) -> Result<PathBuf, String> {
+fn resolve_source_ref(
+    raw: &str,
+    recipe: &Recipe,
+    registry: &ArtifactRegistry,
+) -> Result<PathBuf, String> {
+    use crate::recipe::resolve::{reference_escapes_upward, reference_is_manifest_path};
+
+    if reference_is_manifest_path(raw) {
+        if let Some(resolved) = recipe.resolve_reference(raw) {
+            return Ok(resolved);
+        }
+        let as_manifest_path = Path::new(raw);
+        if as_manifest_path.is_absolute() {
+            return canonicalize_existing(as_manifest_path, "source manifest");
+        }
+        if reference_escapes_upward(raw) {
+            return Err(format!(
+                "inputs.source_manifest '{}' must not contain '..' segments; recipe inputs are \
+                 resolved within the repository that contains the recipe",
+                raw
+            ));
+        }
+        if looks_like_filesystem_path(raw) {
+            return Err(format!(
+                "Failed to load source manifest '{}': file not found",
+                raw
+            ));
+        }
+    }
+
     let as_path = Path::new(raw);
     if as_path.exists() {
         return Ok(as_path.to_path_buf());
-    }
-    if looks_like_filesystem_path(raw) {
-        return Err(format!(
-            "Failed to load source manifest '{}': file not found",
-            raw
-        ));
     }
     let entry = registry
         .lookup(raw)
@@ -167,7 +190,7 @@ fn resolve_planned(path: &Path) -> Result<PathBuf, String> {
         return canonicalize_existing(path, "path");
     }
     let (parent, file_name) = split_planned(path)?;
-    resolve_under_parent(path, parent, file_name)
+    resolve_under_parent(parent, file_name)
 }
 
 fn split_planned(path: &Path) -> Result<(&Path, &OsStr), String> {
@@ -180,17 +203,30 @@ fn split_planned(path: &Path) -> Result<(&Path, &OsStr), String> {
     Ok((parent, file_name))
 }
 
-fn resolve_under_parent(path: &Path, parent: &Path, file_name: &OsStr) -> Result<PathBuf, String> {
+fn resolve_under_parent(parent: &Path, file_name: &OsStr) -> Result<PathBuf, String> {
     if parent.as_os_str().is_empty() {
         let cwd = std::env::current_dir()
             .map_err(|e| format!("Failed to resolve current directory: {e}"))?;
         return Ok(cwd.join(file_name));
     }
-    if !parent.exists() {
-        return Ok(path.to_path_buf());
+
+    let mut suffix = PathBuf::from(file_name);
+    let mut cursor = parent;
+    while !cursor.as_os_str().is_empty() && !cursor.exists() {
+        if let Some(name) = cursor.file_name() {
+            suffix = PathBuf::from(name).join(suffix);
+        }
+        cursor = cursor.parent().unwrap_or(Path::new(""));
     }
-    let canonical_parent = canonicalize_existing(parent, "output dir")?;
-    Ok(canonical_parent.join(file_name))
+
+    if cursor.as_os_str().is_empty() {
+        let cwd = std::env::current_dir()
+            .map_err(|e| format!("Failed to resolve current directory: {e}"))?;
+        return Ok(cwd.join(parent).join(file_name));
+    }
+
+    let canonical_parent = canonicalize_existing(cursor, "output dir")?;
+    Ok(canonical_parent.join(suffix))
 }
 
 fn paths_alias(left: &Path, right: &Path) -> bool {
@@ -249,4 +285,74 @@ fn sibling_goz1(manifest: &Path) -> Option<PathBuf> {
     let name = manifest.file_name()?.to_string_lossy();
     let stem = name.strip_suffix(".manifest.json")?;
     Some(manifest.with_file_name(format!("{stem}.goz1")))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::pack::recipe::load_pack_recipe;
+    use crate::registry::ArtifactRegistry;
+    use serde_json::json;
+    use std::fs;
+    use std::path::PathBuf;
+    use tempfile::TempDir;
+
+    const SOURCE: &str = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../manifests/examples/grok-1-future-plan.json"
+    );
+    const DISSECT: &str = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../configs/recipes/fixtures/grok-mini-dissect.json"
+    );
+
+    #[test]
+    fn resolves_source_manifest_beside_the_recipe_file() {
+        let dir = TempDir::new().unwrap();
+        let manifests = dir.path().join("manifests");
+        fs::create_dir_all(&manifests).unwrap();
+        fs::copy(PathBuf::from(SOURCE), manifests.join("beside.json")).unwrap();
+        let recipes = dir.path().join("configs/recipes");
+        fs::create_dir_all(&recipes).unwrap();
+        let recipe_path = recipes.join("pack.json");
+        let recipe_body = json!({
+            "recipe_id": "beside-pack",
+            "type": "ternary_pack",
+            "inputs": { "source_manifest": "../../manifests/beside.json" },
+            "outputs": {
+                "generated_format": "goz1",
+                "manifest_id": "test-pack-v1",
+                "output_dir": dir.path().join("packs").display().to_string()
+            },
+            "pack": {
+                "dissect_manifest": DISSECT,
+                "input_format": "safetensors"
+            }
+        });
+        fs::write(
+            &recipe_path,
+            serde_json::to_string_pretty(&recipe_body).unwrap(),
+        )
+        .unwrap();
+        let recipe = load_pack_recipe(&recipe_path).unwrap();
+        let registry = ArtifactRegistry::new();
+        let (resolved, _) = resolve_source_manifest(&recipe, &registry).unwrap();
+        assert!(resolved.ends_with("manifests/beside.json"));
+        assert!(resolved.is_file());
+    }
+
+    #[test]
+    fn planned_paths_under_new_subdirs_share_a_canonical_root() {
+        let dir = TempDir::new().unwrap();
+        let base = dir.path().join("pack-root");
+        fs::create_dir_all(&base).unwrap();
+        let a = base.join("new/out/a.goz1");
+        let b = base.join("./new/out/a.goz1");
+        let ra = resolve_planned_path(&a).unwrap();
+        let rb = resolve_planned_path(&b).unwrap();
+        assert_eq!(
+            ra, rb,
+            "alias detection must canonicalize through the nearest existing parent"
+        );
+    }
 }

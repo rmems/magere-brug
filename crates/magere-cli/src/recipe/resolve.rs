@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 
 /// A reference is treated as a filesystem path when it names a JSON file;
 /// anything else is a registry id resolved elsewhere.
-pub(super) fn reference_is_manifest_path(reference: &str) -> bool {
+pub(crate) fn reference_is_manifest_path(reference: &str) -> bool {
     reference.ends_with(".json")
 }
 
@@ -13,7 +13,7 @@ pub(super) fn reference_is_manifest_path(reference: &str) -> bool {
 ///
 /// Checked as a segment rather than a substring so that legitimate names
 /// containing dots (`model..v2.json`) are not rejected.
-pub(super) fn reference_escapes_upward(reference: &str) -> bool {
+pub(crate) fn reference_escapes_upward(reference: &str) -> bool {
     Path::new(reference)
         .components()
         .any(|component| matches!(component, std::path::Component::ParentDir))
@@ -147,7 +147,7 @@ impl Recipe {
     ///
     /// The search is **bounded before it begins**, so it can never reach outside the
     /// tree the recipe lives in.
-    pub(super) fn resolve_reference(&self, reference: &str) -> Option<PathBuf> {
+    pub(crate) fn resolve_reference(&self, reference: &str) -> Option<PathBuf> {
         let candidate = Path::new(reference);
         if candidate.is_absolute() {
             return None;

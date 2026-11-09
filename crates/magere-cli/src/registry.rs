@@ -38,8 +38,8 @@ pub struct RegistryEntry {
     pub generated_status: Option<String>,
     /// Recipe id recorded when a command wrote the entry.
     ///
-    /// Replay identity is the manifest id, `producer`, and a non-success
-    /// `generated_status`. This field is lineage, not part of that check.
+    /// Replay identity is the manifest id, `producer`, and `generated_status ==
+    /// "planned"`. This field is lineage, not part of that check.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub recipe_id: Option<String>,
 }
@@ -251,6 +251,24 @@ impl ArtifactRegistry {
     pub fn from_json(json: &str) -> Result<Self, serde_json::Error> {
         serde_json::from_str(json)
     }
+
+    /// Dry-run [`commit_pack`] before pack bytes hit disk: manifest schema and slug ownership.
+    pub fn rehearse_pack_commit(
+        &self,
+        manifest: &Manifest,
+        admission: PackAdmission,
+    ) -> Result<(), String> {
+        manifest
+            .validate()
+            .map_err(|e| format!("emitted manifest is invalid: {e}"))?;
+        match admission {
+            PackAdmission::ReplaceOwnPlanned => Ok(()),
+            PackAdmission::Insert if self.models.contains_key(&manifest.model.slug) => Err(
+                format!("model slug '{}' is already registered", manifest.model.slug),
+            ),
+            PackAdmission::Insert => Ok(()),
+        }
+    }
 }
 
 /// Store an absolute manifest path so later lookups survive a working-directory change.
@@ -267,7 +285,7 @@ pub fn canonical_manifest_path(path: &Path) -> Result<PathBuf, String> {
 fn own_planned_replay(existing: &RegistryEntry, manifest_id: &str) -> bool {
     existing.manifest_id == manifest_id
         && existing.producer.as_deref() == Some(PACK_GOZ1_PRODUCER)
-        && existing.generated_status.as_deref() != Some("success")
+        && existing.generated_status.as_deref() == Some("planned")
 }
 
 fn stored_manifest_path(path: Option<&Path>) -> Result<Option<PathBuf>, String> {
@@ -441,5 +459,44 @@ mod tests {
         assert!(stored.is_absolute());
         assert!(stored.is_file());
         assert_eq!(stored, std::fs::canonicalize(&manifest_path).unwrap());
+    }
+
+    #[test]
+    fn admit_pack_only_replays_own_planned_skeleton_packs() {
+        let mut registry = ArtifactRegistry::new();
+        let manifest_id = "test-pack-v1";
+        let slug = "grok_1_future_goz1";
+        for (generated_status, expect_replay) in [
+            (Some("planned"), true),
+            (Some("success"), false),
+            (None, false),
+        ] {
+            registry.models.clear();
+            registry.models.insert(
+                slug.to_string(),
+                RegistryEntry {
+                    slug: slug.to_string(),
+                    manifest_id: manifest_id.to_string(),
+                    family: "grok".to_string(),
+                    status: "registered".to_string(),
+                    registered_at: "2026-08-01T00:00:00Z".to_string(),
+                    notes: None,
+                    manifest_path: None,
+                    producer: Some(PACK_GOZ1_PRODUCER.to_string()),
+                    generated_status: generated_status.map(str::to_string),
+                    recipe_id: None,
+                },
+            );
+            let admission = registry.admit_pack(slug, manifest_id, true);
+            if expect_replay {
+                assert_eq!(admission.unwrap(), PackAdmission::ReplaceOwnPlanned);
+            } else {
+                assert!(
+                    admission.is_err(),
+                    "status {:?} must not replay",
+                    generated_status
+                );
+            }
+        }
     }
 }

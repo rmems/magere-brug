@@ -1,5 +1,5 @@
 use super::harness::*;
-use crate::pack::io::verify_written_pack;
+use crate::pack::io::{validate_pack_bytes, verify_written_pack};
 use crate::pack::*;
 use magere_grok_process::weight_pack::parse_pack;
 use std::fs;
@@ -60,7 +60,11 @@ fn verify_rejects_a_pack_with_the_wrong_version() {
     clobbered[4..8].copy_from_slice(&99u32.to_le_bytes());
     fs::write(&path, &clobbered).unwrap();
     let err = verify_written_pack(&path, &clobbered).unwrap_err();
-    assert!(err.contains("did not round-trip"), "{}", err);
+    assert!(
+        err.contains("did not parse as GOZ1") || err.contains("did not round-trip"),
+        "{}",
+        err
+    );
 }
 
 #[test]
@@ -79,6 +83,12 @@ fn verify_rejects_a_pack_with_an_unknown_dtype() {
     fs::write(&path, &clobbered).unwrap();
     let err = verify_written_pack(&path, &clobbered).unwrap_err();
     assert!(err.contains("unknown dtype"), "{}", err);
+}
+
+#[test]
+fn validate_pack_bytes_rejects_empty_output_before_write() {
+    let err = validate_pack_bytes(&[]).unwrap_err();
+    assert!(err.contains("empty"), "{err}");
 }
 
 #[test]

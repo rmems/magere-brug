@@ -19,7 +19,7 @@
 
 mod apply;
 mod apply_emit;
-mod resolve;
+pub(crate) mod resolve;
 mod summary;
 mod validate;
 

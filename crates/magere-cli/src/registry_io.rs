@@ -39,17 +39,22 @@ impl Drop for RegistryLock {
     }
 }
 
+/// Load the artifact registry from disk.
+///
+/// The sibling `*.lock` file coordinates cooperating `magere` processes only; it
+/// does not stop a foreign writer from replacing the registry while this call reads.
 pub fn load_registry(registry_file: &Path) -> Result<ArtifactRegistry, String> {
-    if !registry_file.exists() {
-        return Ok(ArtifactRegistry::new());
-    }
-    let content = std::fs::read_to_string(registry_file).map_err(|e| {
-        format!(
-            "Failed to read registry '{}': {}",
-            registry_file.display(),
-            e
-        )
-    })?;
+    let content = match std::fs::read_to_string(registry_file) {
+        Ok(content) => content,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(ArtifactRegistry::new()),
+        Err(e) => {
+            return Err(format!(
+                "Failed to read registry '{}': {}",
+                registry_file.display(),
+                e
+            ));
+        }
+    };
     ArtifactRegistry::from_json(&content).map_err(|e| {
         format!(
             "Failed to parse registry '{}': {}",
@@ -116,5 +121,13 @@ mod tests {
         );
         drop(held);
         acquired_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+    }
+
+    #[test]
+    fn missing_registry_file_loads_as_empty() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("no-such-registry.json");
+        let registry = load_registry(&path).unwrap();
+        assert_eq!(registry.count(), 0);
     }
 }

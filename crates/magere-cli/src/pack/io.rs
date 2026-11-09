@@ -15,6 +15,11 @@ pub(super) struct PackStats {
     pub size_bytes: u64,
 }
 
+/// Validate in-memory pack bytes before they are written to disk.
+pub(super) fn validate_pack_bytes(bytes: &[u8]) -> Result<PackStats, String> {
+    pack_stats_from_bytes(bytes, "pack bytes")
+}
+
 /// Re-read the pack from disk and prove it is exactly what we meant to write.
 ///
 /// `expected` is the in-memory buffer the caller just wrote. Comparing against it is what
@@ -24,26 +29,27 @@ pub(super) fn verify_written_pack(pack_path: &Path, expected: &[u8]) -> Result<P
     let written = std::fs::read(pack_path)
         .map_err(|e| format!("Failed to re-read pack '{}': {}", pack_path.display(), e))?;
     assert_bytes_match(pack_path, &written, expected)?;
-    if !written.starts_with(GOZ1_MAGIC) {
-        return Err(format!(
-            "pack '{}' does not start with the GOZ1 magic",
-            pack_path.display()
-        ));
+    pack_stats_from_bytes(&written, &format!("pack '{}'", pack_path.display()))
+}
+
+fn pack_stats_from_bytes(bytes: &[u8], label: &str) -> Result<PackStats, String> {
+    if bytes.is_empty() {
+        return Err(format!("{label}: refusing to accept an empty GOZ1 pack"));
     }
-    let (header, entries) = parse_pack(&written).ok_or_else(|| {
+    if !bytes.starts_with(GOZ1_MAGIC) {
+        return Err(format!("{label}: does not start with the GOZ1 magic"));
+    }
+    let (header, entries) = parse_pack(bytes).ok_or_else(|| {
         format!(
-            "pack '{}' did not round-trip through parse_pack: the GOZ1 magic, version {} or \
-             the tensor table did not survive the write",
-            pack_path.display(),
-            GOZ1_VERSION
+            "{label}: did not parse as GOZ1 version {GOZ1_VERSION} (magic, version, or tensor table)"
         )
     })?;
-    let (f16_count, ternary_count) = count_known_dtypes(pack_path, &entries)?;
+    let (f16_count, ternary_count) = count_known_dtypes_label(label, &entries)?;
     Ok(PackStats {
         tensor_count: header.tensor_count,
         f16_count,
         ternary_count,
-        size_bytes: written.len() as u64,
+        size_bytes: bytes.len() as u64,
     })
 }
 
@@ -73,7 +79,10 @@ fn assert_bytes_match(pack_path: &Path, written: &[u8], expected: &[u8]) -> Resu
     ))
 }
 
-fn count_known_dtypes(pack_path: &Path, entries: &[PackTensorEntry]) -> Result<(u32, u32), String> {
+fn count_known_dtypes_label(
+    label: &str,
+    entries: &[PackTensorEntry],
+) -> Result<(u32, u32), String> {
     let mut f16_count: u32 = 0;
     let mut ternary_count: u32 = 0;
     for entry in entries {
@@ -82,10 +91,8 @@ fn count_known_dtypes(pack_path: &Path, entries: &[PackTensorEntry]) -> Result<(
             TENSOR_TERNARY => ternary_count += 1,
             other => {
                 return Err(format!(
-                    "pack '{}' tensor '{}' has unknown dtype 0x{:02x}",
-                    pack_path.display(),
-                    entry.name,
-                    other
+                    "{label} tensor '{}' has unknown dtype 0x{:02x}",
+                    entry.name, other
                 ));
             }
         }

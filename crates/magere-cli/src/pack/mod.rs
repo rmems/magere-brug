@@ -243,10 +243,8 @@ fn execute_pack_run(prepared: PreparedPack) -> Result<PackOutcome, String> {
     } = prepared;
     let bytes =
         run_quantize(&quantize_config, &dissect).map_err(|e| format!("GOZ1 pack failed: {}", e))?;
-    write_bytes_atomically(&layout.pack_path, &bytes)?;
-    let stats = io::verify_written_pack(&layout.pack_path, &bytes)?;
-    let sha256 = checksum::compute_file_sha256(&layout.pack_path)
-        .map_err(|e| format!("Failed to checksum '{}': {}", layout.pack_path.display(), e))?;
+    let stats = io::validate_pack_bytes(&bytes)?;
+    let sha256 = checksum::compute_bytes_sha256(&bytes);
     let emitted = build_generated_manifest(GeneratedManifestSpec {
         recipe: &recipe,
         source: &source,
@@ -257,17 +255,27 @@ fn execute_pack_run(prepared: PreparedPack) -> Result<PackOutcome, String> {
         dissect_input: &dissect_input,
         resolved_input_dir: &input_dir,
     });
+    if will_register {
+        registry.rehearse_pack_commit(&emitted, admission)?;
+    }
+    write_bytes_atomically(&layout.pack_path, &bytes)?;
+    let stats = io::verify_written_pack(&layout.pack_path, &bytes)?;
     write_emitted_manifest(&emitted, &layout.manifest_path)?;
     let registry_replaced = if will_register {
-        register_emitted(
+        match register_and_persist(
             &mut registry,
             &emitted,
             &layout,
             &recipe.recipe_id,
             admission,
-        )?;
-        persist_registry(&registry, &registry_file)?;
-        admission == PackAdmission::ReplaceOwnPlanned
+            &registry_file,
+        ) {
+            Ok(replaced) => replaced,
+            Err(err) => {
+                remove_written_outputs(&layout);
+                return Err(err);
+            }
+        }
     } else {
         false
     };
@@ -431,6 +439,19 @@ fn write_emitted_manifest(emitted: &Manifest, manifest_path: &Path) -> Result<()
     })
 }
 
+fn register_and_persist(
+    registry: &mut ArtifactRegistry,
+    emitted: &Manifest,
+    layout: &OutputLayout,
+    recipe_id: &str,
+    admission: PackAdmission,
+    registry_file: &Path,
+) -> Result<bool, String> {
+    register_emitted(registry, emitted, layout, recipe_id, admission)
+        .and_then(|()| persist_registry(registry, registry_file))
+        .map(|()| admission == PackAdmission::ReplaceOwnPlanned)
+}
+
 fn register_emitted(
     registry: &mut ArtifactRegistry,
     emitted: &Manifest,
@@ -455,17 +476,17 @@ fn register_emitted(
         )
         .map_err(|e| {
             format!(
-                "{}\n  note: the pack and manifest were already written before this collision was \
-                 detected:\n    {}\n    {}\n  they are left in place. The registry key is the \
-                 generated slug '{}' (always `<source model slug>_goz1`); changing \
-                 `outputs.manifest_id` cannot avoid this collision. Remove the conflicting \
-                 registry entry or pack a different source model.",
-                e,
-                layout.pack_path.display(),
-                layout.manifest_path.display(),
-                emitted.model.slug
+                "{}\n  note: the pack and manifest were removed because registry registration \
+                 failed. The registry key is the generated slug '{}' (always \
+                 `<source model slug>_goz1`).",
+                e, emitted.model.slug
             )
         })
+}
+
+fn remove_written_outputs(layout: &OutputLayout) {
+    let _ = std::fs::remove_file(&layout.pack_path);
+    let _ = std::fs::remove_file(&layout.manifest_path);
 }
 
 fn persist_registry(registry: &ArtifactRegistry, registry_file: &Path) -> Result<(), String> {

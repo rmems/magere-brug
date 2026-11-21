@@ -30,7 +30,7 @@ Run fmt and clippy before committing; CI fails on either.
 
 - `crates/magere-cli`: the `magere` binary (`src/main.rs`). Manifests, registry, checksums, `pack/` (GOZ1 packing), `recipe/`, and the recipe-driven SAAQ runner in `saaq.rs`.
 - `crates/magere-corinth-core`: CPU-only SAAQ validation pipeline (telemetry, projector, funnel, latent, metric).
-- `crates/magere-grok-process`: Grok-1 quantization engine (artifact, quantizer, precision, weight pack). It is `GPL-3.0-or-later`, unlike the other crates.
+- `crates/magere-grok-process`: Grok-1 quantization engine (artifact, quantizer, precision, weight pack). It was relicensed from `GPL-3.0-or-later` to `Apache-2.0 OR MIT` (RM-231, 2026-11-21); the whole workspace is now uniformly `Apache-2.0 OR MIT`.
 - `crates/magere-bridge`: placeholder `main.rs` that only prints "Hello, world!".
 - `schemas/` holds `model_manifest.schema.json` and `recipe.schema.json`; `manifests/examples/` and `configs/{models,recipes}/` are the validated fixtures.
 - `scripts/`: stdlib Python helpers plus `tests/test_manifest.py`; `pyproject.toml` and `uv.lock` live here, not at the repo root.
@@ -43,7 +43,7 @@ Run fmt and clippy before committing; CI fails on either.
 - Cloud stubs in `configs/models/cloud/` must hold placeholder markers, never real credentials.
 - A schema change needs matching updates to `manifests/examples/` and `configs/`. `manifest-validate.yml` runs `magere validate` on the manifests and `magere recipe validate` on `configs/recipes/`, plus `scripts/validate_configs.py` (model configs and cloud stubs), `check_required_fields.py`, and `check_artifact_shape.py`. `docs-check.yml` only checks that both schema files are valid JSON.
 - Generated outputs (`artifacts/packs/*`, `artifacts/registry.json`, `artifacts/saaq/`, `artifacts/manifests/`, `artifacts/handoff/`) are gitignored. Do not commit them.
-- `magere-corinth-core` (`// SPDX-License-Identifier: Apache-2.0 OR MIT`) and `magere-grok-process` (`// SPDX-License-Identifier: GPL-3.0-or-later`) start every `.rs` file with an SPDX header; keep it on new files there. `magere-cli` and `magere-bridge` have none, so do not add one.
+- `magere-corinth-core` and `magere-grok-process` start every `.rs` file with an `// SPDX-License-Identifier: Apache-2.0 OR MIT` header; keep it on new files there. `magere-cli` and `magere-bridge` have none, so do not add one.
 
 ## Gotchas
 

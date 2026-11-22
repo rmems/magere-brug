@@ -25,7 +25,7 @@ impl Recipe {
         let source = self.load_register_source()?;
         let registry_path = self.registry_destination(registry_override);
         let _lock = crate::registry_io::RegistryLock::acquire(&registry_path)?;
-        let registry = prepare_registry_update(&source.manifest, &registry_path)?;
+        let registry = prepare_registry_update(&source.manifest, &source.path, &registry_path)?;
         let (emitted_manifest, emitted_handoff) =
             self.emit_registered_artifacts(&source, &registry_path)?;
         crate::registry_io::store_registry(&registry, &registry_path)?;
@@ -171,6 +171,7 @@ fn require_registration_requested(recipe: &Recipe) -> Result<(), String> {
 
 fn prepare_registry_update(
     manifest: &Manifest,
+    manifest_path: &Path,
     registry_path: &Path,
 ) -> Result<ArtifactRegistry, String> {
     let mut registry = crate::registry_io::load_registry(registry_path)?;
@@ -182,7 +183,7 @@ fn prepare_registry_update(
             manifest.metadata.manifest_id, owner.slug, manifest.model.slug
         ));
     }
-    registry.register_or_update(manifest)?;
+    registry.register_or_update(manifest, Some(manifest_path))?;
     Ok(registry)
 }
 

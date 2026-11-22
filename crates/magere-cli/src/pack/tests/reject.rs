@@ -383,6 +383,26 @@ fn a_predictable_temp_name_does_not_truncate_an_input() {
 }
 
 #[test]
+fn manifest_write_failure_removes_the_written_pack() {
+    let h = default_harness();
+    fs::create_dir_all(&h.output_dir).unwrap();
+    // A directory where the manifest file must land makes the manifest write
+    // fail after the pack bytes have already been written and verified.
+    fs::create_dir(h.output_dir.join("test-pack-v1.manifest.json")).unwrap();
+
+    let err = run_pack_recipe(&h.recipe_path, Some(&h.registry_path), None).unwrap_err();
+    assert!(err.contains("test-pack-v1.manifest.json"), "{}", err);
+    assert!(
+        !h.output_dir.join("test-pack-v1.goz1").exists(),
+        "pack must be removed when the manifest write fails"
+    );
+    assert!(
+        !h.registry_path.exists(),
+        "registry is untouched when the manifest write fails"
+    );
+}
+
+#[test]
 #[cfg(unix)]
 fn persist_failure_removes_written_pack_artifacts() {
     use std::os::unix::fs::PermissionsExt;

@@ -255,12 +255,20 @@ fn execute_pack_run(prepared: PreparedPack) -> Result<PackOutcome, String> {
         dissect_input: &dissect_input,
         resolved_input_dir: &input_dir,
     });
+    emitted
+        .validate()
+        .map_err(|e| format!("emitted manifest is invalid: {e}"))?;
     if will_register {
         registry.rehearse_pack_commit(&emitted, admission)?;
     }
     write_bytes_atomically(&layout.pack_path, &bytes)?;
-    let stats = io::verify_written_pack(&layout.pack_path, &bytes)?;
-    write_emitted_manifest(&emitted, &layout.manifest_path)?;
+    let stats = match verify_pack_and_emit_manifest(&layout, &bytes, &emitted) {
+        Ok(stats) => stats,
+        Err(err) => {
+            remove_written_outputs(&layout);
+            return Err(err);
+        }
+    };
     let registry_replaced = if will_register {
         match register_and_persist(
             &mut registry,
@@ -422,6 +430,18 @@ fn reject_model_mismatch(
          pack.allow_model_mismatch=true",
         source_family, dissect_family, source.model.name, dissect.model.name
     ))
+}
+
+/// Verify the pack on disk, then write the emitted manifest. A failure here
+/// leaves partial outputs that the caller removes.
+fn verify_pack_and_emit_manifest(
+    layout: &OutputLayout,
+    bytes: &[u8],
+    emitted: &Manifest,
+) -> Result<io::PackStats, String> {
+    let stats = io::verify_written_pack(&layout.pack_path, bytes)?;
+    write_emitted_manifest(emitted, &layout.manifest_path)?;
+    Ok(stats)
 }
 
 fn write_emitted_manifest(emitted: &Manifest, manifest_path: &Path) -> Result<(), String> {

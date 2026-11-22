@@ -171,7 +171,15 @@ impl ArtifactRegistry {
 
     /// Register a model, replacing an existing slug. Used by recipe apply so
     /// replaying a register recipe is idempotent.
-    pub fn register_or_update(&mut self, manifest: &Manifest) -> Result<bool, String> {
+    ///
+    /// `manifest_path` is the file the manifest was loaded from. When given it is
+    /// canonicalized and stored so slug / manifest-id lookups can reload it; when
+    /// `None`, a previous entry's path is kept only if the manifest id is unchanged.
+    pub fn register_or_update(
+        &mut self,
+        manifest: &Manifest,
+        manifest_path: Option<&Path>,
+    ) -> Result<bool, String> {
         manifest.validate()?;
 
         let previous = self.models.get(&manifest.model.slug).cloned();
@@ -184,10 +192,13 @@ impl ArtifactRegistry {
             .filter(|_| same_manifest)
             .map(|entry| entry.registered_at.clone())
             .unwrap_or_else(|| chrono::Utc::now().to_rfc3339());
-        let manifest_path = previous
-            .as_ref()
-            .filter(|_| same_manifest)
-            .and_then(|entry| entry.manifest_path.clone());
+        let manifest_path = match manifest_path {
+            Some(path) => stored_manifest_path(Some(path))?,
+            None => previous
+                .as_ref()
+                .filter(|_| same_manifest)
+                .and_then(|entry| entry.manifest_path.clone()),
+        };
         let producer = previous
             .as_ref()
             .filter(|_| same_manifest)
@@ -393,9 +404,9 @@ mod tests {
         let mut registry = ArtifactRegistry::new();
         let manifest = create_test_manifest();
 
-        assert!(!registry.register_or_update(&manifest).unwrap());
+        assert!(!registry.register_or_update(&manifest, None).unwrap());
         let first_registered_at = registry.lookup("test_model").unwrap().registered_at.clone();
-        assert!(registry.register_or_update(&manifest).unwrap());
+        assert!(registry.register_or_update(&manifest, None).unwrap());
         assert_eq!(registry.count(), 1);
         assert_eq!(
             registry.lookup("test_model").unwrap().manifest_id,
@@ -424,7 +435,7 @@ mod tests {
             .register_at(&manifest, Some(&manifest_path))
             .unwrap();
         manifest.metadata.manifest_id = "other-manifest".to_string();
-        assert!(registry.register_or_update(&manifest).unwrap());
+        assert!(registry.register_or_update(&manifest, None).unwrap());
         assert!(
             registry
                 .lookup("test_model")
@@ -432,6 +443,45 @@ mod tests {
                 .manifest_path
                 .is_none(),
             "a new manifest id must not keep the previous file path"
+        );
+    }
+
+    #[test]
+    fn register_or_update_stores_the_given_manifest_path() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let first_path = dir.path().join("first.json");
+        let second_path = dir.path().join("second.json");
+        let manifest = create_test_manifest();
+        for path in [&first_path, &second_path] {
+            std::fs::write(path, serde_json::to_string_pretty(&manifest).unwrap()).unwrap();
+        }
+
+        let mut registry = ArtifactRegistry::new();
+        registry
+            .register_or_update(&manifest, Some(&first_path))
+            .unwrap();
+        let expected = std::fs::canonicalize(&first_path).unwrap();
+        assert_eq!(
+            registry
+                .lookup("test_model")
+                .unwrap()
+                .manifest_path
+                .as_deref(),
+            Some(expected.as_path())
+        );
+
+        registry
+            .register_or_update(&manifest, Some(&second_path))
+            .unwrap();
+        let expected = std::fs::canonicalize(&second_path).unwrap();
+        assert_eq!(
+            registry
+                .lookup("test_model")
+                .unwrap()
+                .manifest_path
+                .as_deref(),
+            Some(expected.as_path()),
+            "a re-registration from a new path must refresh manifest_path"
         );
     }
 

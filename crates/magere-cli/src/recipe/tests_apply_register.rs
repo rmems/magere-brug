@@ -76,6 +76,36 @@ fn test_apply_register_writes_registry() {
 }
 
 #[test]
+fn test_apply_register_stores_the_source_manifest_path() {
+    let (dir, recipe) = recipe_in_temp_dir(
+        r#"{
+          "recipe_id": "register-path-apply",
+          "type": "register",
+          "inputs": { "source_manifest": "manifest.json" }
+        }"#,
+        &sample_manifest_json("sample-v1", "sample_model", "safetensors"),
+    );
+
+    let registry_path = dir.path().join("registry.json");
+    recipe
+        .apply(Some(&registry_path))
+        .expect("register applies");
+
+    let registry =
+        ArtifactRegistry::from_json(&std::fs::read_to_string(&registry_path).unwrap()).unwrap();
+    let stored = registry
+        .lookup("sample_model")
+        .unwrap()
+        .manifest_path
+        .clone()
+        .expect("apply must record the source manifest path");
+    assert_eq!(
+        stored,
+        std::fs::canonicalize(dir.path().join("manifest.json")).unwrap()
+    );
+}
+
+#[test]
 fn test_apply_register_is_idempotent() {
     let (dir, recipe) = recipe_in_temp_dir(
         r#"{

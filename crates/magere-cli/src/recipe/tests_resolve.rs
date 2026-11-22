@@ -253,6 +253,7 @@ fn absolute_manifest_reference_is_rejected() {
 }
 
 #[test]
+#[cfg(unix)]
 fn symlink_escape_is_rejected() {
     let lab = tempfile::tempdir().expect("tempdir");
     let outside = lab.path().join("planted.json");

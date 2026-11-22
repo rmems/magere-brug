@@ -51,7 +51,14 @@ fn reject_symlink_components(path: &Path, label: &str) -> Result<(), String> {
     let mut prefix = PathBuf::new();
     for component in path.components() {
         prefix.push(component);
-        if prefix.as_os_str().is_empty() {
+        if prefix.as_os_str().is_empty()
+            || matches!(
+                component,
+                std::path::Component::Prefix(_) | std::path::Component::RootDir
+            )
+        {
+            // A volume prefix (`C:` / `\\?\C:`) or root (`/`, `C:\`) is not a
+            // stat-able file path on its own and can never be a symlink.
             continue;
         }
         let metadata = match std::fs::symlink_metadata(&prefix) {

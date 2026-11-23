@@ -3,7 +3,6 @@ use crate::pack::io::{validate_pack_bytes, verify_written_pack};
 use crate::pack::*;
 use magere_grok_process::weight_pack::parse_pack;
 use std::fs;
-use tempfile::TempDir;
 
 fn valid_pack_bytes() -> Vec<u8> {
     let h = default_harness();
@@ -14,7 +13,7 @@ fn valid_pack_bytes() -> Vec<u8> {
 #[test]
 fn verify_rejects_a_tail_truncated_pack() {
     let bytes = valid_pack_bytes();
-    let dir = TempDir::new().unwrap();
+    let dir = test_dir();
     let path = dir.path().join("truncated.goz1");
     let truncated = &bytes[..bytes.len() - (FIXTURE_TENSORS as usize * 4)];
     fs::write(&path, truncated).unwrap();
@@ -28,7 +27,7 @@ fn verify_rejects_a_tail_truncated_pack() {
 #[test]
 fn verify_rejects_a_corrupted_byte() {
     let bytes = valid_pack_bytes();
-    let dir = TempDir::new().unwrap();
+    let dir = test_dir();
     let path = dir.path().join("corrupt.goz1");
     let mut corrupt = bytes.clone();
     let last = corrupt.len() - 1;
@@ -42,7 +41,7 @@ fn verify_rejects_a_corrupted_byte() {
 #[test]
 fn verify_rejects_a_pack_without_the_goz1_magic() {
     let bytes = valid_pack_bytes();
-    let dir = TempDir::new().unwrap();
+    let dir = test_dir();
     let path = dir.path().join("nomagic.goz1");
     let mut clobbered = bytes.clone();
     clobbered[..4].copy_from_slice(b"NOPE");
@@ -54,7 +53,7 @@ fn verify_rejects_a_pack_without_the_goz1_magic() {
 #[test]
 fn verify_rejects_a_pack_with_the_wrong_version() {
     let bytes = valid_pack_bytes();
-    let dir = TempDir::new().unwrap();
+    let dir = test_dir();
     let path = dir.path().join("badversion.goz1");
     let mut clobbered = bytes.clone();
     clobbered[4..8].copy_from_slice(&99u32.to_le_bytes());
@@ -70,7 +69,7 @@ fn verify_rejects_a_pack_with_the_wrong_version() {
 #[test]
 fn verify_rejects_a_pack_with_an_unknown_dtype() {
     let bytes = valid_pack_bytes();
-    let dir = TempDir::new().unwrap();
+    let dir = test_dir();
     let path = dir.path().join("baddtype.goz1");
     let mut clobbered = bytes.clone();
     let table_offset = u64::from_le_bytes(clobbered[12..20].try_into().unwrap()) as usize;
@@ -94,7 +93,7 @@ fn validate_pack_bytes_rejects_empty_output_before_write() {
 #[test]
 fn verify_accepts_the_pack_the_command_actually_wrote() {
     let bytes = valid_pack_bytes();
-    let dir = TempDir::new().unwrap();
+    let dir = test_dir();
     let path = dir.path().join("good.goz1");
     fs::write(&path, &bytes).unwrap();
     let stats = verify_written_pack(&path, &bytes).expect("valid pack verifies");

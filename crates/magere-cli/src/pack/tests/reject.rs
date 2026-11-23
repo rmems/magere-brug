@@ -4,11 +4,10 @@ use crate::pack::*;
 use magere_grok_process::types::InputFormat;
 use serde_json::json;
 use std::fs;
-use tempfile::TempDir;
 
 #[test]
 fn rejects_non_pack_recipe_type() {
-    let dir = TempDir::new().unwrap();
+    let dir = test_dir();
     let mut recipe = base_recipe(&dir.path().join("packs"));
     recipe["type"] = json!("saaq");
     let h = harness_from(dir, &recipe);
@@ -19,7 +18,7 @@ fn rejects_non_pack_recipe_type() {
 
 #[test]
 fn rejects_missing_pack_block() {
-    let dir = TempDir::new().unwrap();
+    let dir = test_dir();
     let mut recipe = base_recipe(&dir.path().join("packs"));
     recipe.as_object_mut().unwrap().remove("pack");
     let h = harness_from(dir, &recipe);
@@ -29,7 +28,7 @@ fn rejects_missing_pack_block() {
 
 #[test]
 fn rejects_unknown_pack_key() {
-    let dir = TempDir::new().unwrap();
+    let dir = test_dir();
     let mut recipe = base_recipe(&dir.path().join("packs"));
     recipe["pack"]["bit_width"] = json!(2);
     let h = harness_from(dir, &recipe);
@@ -39,7 +38,7 @@ fn rejects_unknown_pack_key() {
 
 #[test]
 fn rejects_missing_dissect_manifest() {
-    let dir = TempDir::new().unwrap();
+    let dir = test_dir();
     let mut recipe = base_recipe(&dir.path().join("packs"));
     recipe["pack"]["dissect_manifest"] = json!("/nonexistent/dissect.json");
     let h = harness_from(dir, &recipe);
@@ -54,7 +53,7 @@ fn rejects_missing_dissect_manifest() {
 
 #[test]
 fn rejects_missing_source_manifest() {
-    let dir = TempDir::new().unwrap();
+    let dir = test_dir();
     let mut recipe = base_recipe(&dir.path().join("packs"));
     recipe["inputs"] = json!({});
     let h = harness_from(dir, &recipe);
@@ -64,7 +63,7 @@ fn rejects_missing_source_manifest() {
 
 #[test]
 fn rejects_unwritable_output_dir() {
-    let dir = TempDir::new().unwrap();
+    let dir = test_dir();
     let blocker = dir.path().join("blocked");
     fs::write(&blocker, b"not a directory").unwrap();
     let recipe = base_recipe(&blocker.join("packs"));
@@ -75,7 +74,7 @@ fn rejects_unwritable_output_dir() {
 
 #[test]
 fn rejects_missing_output_dir_without_override() {
-    let dir = TempDir::new().unwrap();
+    let dir = test_dir();
     let mut recipe = base_recipe(&dir.path().join("packs"));
     recipe["outputs"]
         .as_object_mut()
@@ -88,7 +87,7 @@ fn rejects_missing_output_dir_without_override() {
 
 #[test]
 fn rejects_out_of_range_gif_threshold() {
-    let dir = TempDir::new().unwrap();
+    let dir = test_dir();
     let mut recipe = base_recipe(&dir.path().join("packs"));
     recipe["pack"]["gif_threshold"] = json!(4.2);
     let h = harness_from(dir, &recipe);
@@ -98,7 +97,7 @@ fn rejects_out_of_range_gif_threshold() {
 
 #[test]
 fn rejects_non_goz1_generated_format() {
-    let dir = TempDir::new().unwrap();
+    let dir = test_dir();
     let mut recipe = base_recipe(&dir.path().join("packs"));
     recipe["outputs"]["generated_format"] = json!("gguf");
     let h = harness_from(dir, &recipe);
@@ -108,7 +107,7 @@ fn rejects_non_goz1_generated_format() {
 
 #[test]
 fn rejects_manifest_id_with_path_separators() {
-    let dir = TempDir::new().unwrap();
+    let dir = test_dir();
     let mut recipe = base_recipe(&dir.path().join("packs"));
     recipe["outputs"]["manifest_id"] = json!("../escape");
     let h = harness_from(dir, &recipe);
@@ -118,7 +117,7 @@ fn rejects_manifest_id_with_path_separators() {
 
 #[test]
 fn rejects_a_misspelled_outputs_key() {
-    let dir = TempDir::new().unwrap();
+    let dir = test_dir();
     let mut recipe = base_recipe(&dir.path().join("packs"));
     let manifest_id = recipe["outputs"]["manifest_id"].take();
     recipe["outputs"]["manifest_ids"] = manifest_id;
@@ -130,7 +129,7 @@ fn rejects_a_misspelled_outputs_key() {
 
 #[test]
 fn rejects_a_misspelled_inputs_key() {
-    let dir = TempDir::new().unwrap();
+    let dir = test_dir();
     let mut recipe = base_recipe(&dir.path().join("packs"));
     let src = recipe["inputs"]["source_manifest"].take();
     recipe["inputs"]["source_manifests"] = src;
@@ -141,7 +140,7 @@ fn rejects_a_misspelled_inputs_key() {
 
 #[test]
 fn rejects_an_unknown_top_level_recipe_key() {
-    let dir = TempDir::new().unwrap();
+    let dir = test_dir();
     let mut recipe = base_recipe(&dir.path().join("packs"));
     recipe["output"] = recipe["outputs"].take();
     let h = harness_from(dir, &recipe);
@@ -164,7 +163,7 @@ fn rejects_output_dir_with_parent_traversal() {
 
 #[test]
 fn rejects_artifact_path_with_parent_traversal() {
-    let dir = TempDir::new().unwrap();
+    let dir = test_dir();
     let output_dir = dir.path().join("packs");
     let mut recipe = base_recipe(&output_dir);
     recipe["outputs"]["artifact_path"] = json!("../escape.goz1");
@@ -242,7 +241,7 @@ fn refuses_a_registry_symlink_occupying_an_output_path() {
 
 #[test]
 fn refuses_to_overwrite_an_input_aliased_by_an_output_path() {
-    let dir = TempDir::new().unwrap();
+    let dir = test_dir();
     let output_dir = dir.path().join("packs");
     fs::create_dir_all(&output_dir).unwrap();
     let aliased_source = output_dir.join("test-pack-v1.manifest.json");
@@ -261,7 +260,7 @@ fn refuses_to_overwrite_an_input_aliased_by_an_output_path() {
 
 #[test]
 fn refuses_to_use_the_registry_path_as_a_generated_output() {
-    let dir = TempDir::new().unwrap();
+    let dir = test_dir();
     let output_dir = dir.path().join("packs");
     let recipe = base_recipe(&output_dir);
     let h = harness_from(dir, &recipe);
@@ -285,7 +284,7 @@ fn a_malformed_registry_fails_before_anything_is_written() {
 
 #[test]
 fn rejects_dissect_manifest_without_ternary_candidates() {
-    let dir = TempDir::new().unwrap();
+    let dir = test_dir();
     let mut dissect: serde_json::Value =
         serde_json::from_str(&fs::read_to_string(FIXTURE_DISSECT).unwrap()).unwrap();
     dissect["ternary_candidates"] = json!([]);
@@ -300,7 +299,7 @@ fn rejects_dissect_manifest_without_ternary_candidates() {
 
 #[test]
 fn rejects_malformed_recipe_json() {
-    let dir = TempDir::new().unwrap();
+    let dir = test_dir();
     let path = dir.path().join("broken.json");
     fs::write(&path, b"{ not json").unwrap();
     let err = load_pack_recipe(&path).unwrap_err();
@@ -320,7 +319,7 @@ fn input_format_defaults_follow_the_source_artifact() {
 
 #[test]
 fn gguf_source_needs_an_explicit_input_format() {
-    let dir = TempDir::new().unwrap();
+    let dir = test_dir();
     let mut source: serde_json::Value =
         serde_json::from_str(&fs::read_to_string(SOURCE_MANIFEST).unwrap()).unwrap();
     source["source_artifact"] = json!({
@@ -349,7 +348,7 @@ fn gguf_source_needs_an_explicit_input_format() {
 
 #[test]
 fn accepts_schema_fields_the_packer_records_without_applying_calibration() {
-    let dir = TempDir::new().unwrap();
+    let dir = test_dir();
     let output_dir = dir.path().join("packs");
     let registry_path = dir.path().join("declared-registry.json");
     let mut recipe = base_recipe(&output_dir);
@@ -388,7 +387,7 @@ fn accepts_schema_fields_the_packer_records_without_applying_calibration() {
 
 #[test]
 fn rejects_a_source_format_that_disagrees_with_the_manifest() {
-    let dir = TempDir::new().unwrap();
+    let dir = test_dir();
     let mut recipe = base_recipe(&dir.path().join("packs"));
     recipe["inputs"]["source_format"] = json!("safetensors");
     let h = harness_from(dir, &recipe);
@@ -459,7 +458,7 @@ fn refuses_a_shared_manifest_id_owned_by_another_slug() {
 
 #[test]
 fn a_predictable_temp_name_does_not_truncate_an_input() {
-    let dir = TempDir::new().unwrap();
+    let dir = test_dir();
     let output_dir = dir.path().join("packs");
     fs::create_dir_all(&output_dir).unwrap();
     let decoy = output_dir.join(".test-pack-v1.goz1.tmp");
@@ -673,7 +672,7 @@ fn an_output_dir_override_wins_over_a_declared_artifact_path() {
 
 #[test]
 fn rejects_a_dissect_manifest_for_a_different_model_family() {
-    let dir = TempDir::new().unwrap();
+    let dir = test_dir();
     let mut recipe = base_recipe(&dir.path().join("packs"));
     recipe["inputs"]["source_manifest"] = json!(REDPAJAMA_MANIFEST);
     let h = harness_from(dir, &recipe);

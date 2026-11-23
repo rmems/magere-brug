@@ -37,6 +37,28 @@ pub(super) struct Harness {
     pub(super) registry_path: PathBuf,
 }
 
+/// A temp dir whose name cannot trip the recipe schema's AWQ/GPTQ ban:
+/// `TempDir::new` injects six random characters that can spell "gptq"/"awq"
+/// by chance, and pack recipes embed `outputs.output_dir` — a rejected
+/// string fails `load_pack_recipe` before the test reaches its subject.
+/// pid + counter keep the deterministic name unique; rand_bytes(0) leaves
+/// no random component at all.
+pub(super) fn test_dir() -> TempDir {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    static COUNTER: AtomicUsize = AtomicUsize::new(0);
+    let prefix = format!(
+        "mb-{}-{}-",
+        std::process::id(),
+        COUNTER.fetch_add(1, Ordering::Relaxed)
+    );
+    tempfile::Builder::new()
+        .prefix(&prefix)
+        .rand_bytes(0)
+        .tempdir()
+        .unwrap()
+}
+
 pub(super) fn write_recipe(dir: &Path, name: &str, recipe: &serde_json::Value) -> PathBuf {
     let path = dir.join(name);
     fs::write(&path, serde_json::to_string_pretty(recipe).unwrap()).unwrap();
@@ -106,7 +128,7 @@ pub(super) fn shipped_example_paths() -> (std::path::PathBuf, std::path::PathBuf
 }
 
 pub(super) fn default_harness() -> Harness {
-    let dir = TempDir::new().unwrap();
+    let dir = test_dir();
     let recipe = base_recipe(&dir.path().join("packs"));
     harness_from(dir, &recipe)
 }

@@ -442,7 +442,7 @@ mod tests {
             "outputs": {
                 "generated_format": "goz1",
                 "manifest_id": "test-pack-v1",
-                "output_dir": dir.path().join("packs").display().to_string()
+                "output_dir": "packs"
             },
             "pack": {
                 "dissect_manifest": DISSECT,
@@ -481,7 +481,7 @@ mod tests {
             "outputs": {
                 "generated_format": "goz1",
                 "manifest_id": "test-pack-v1",
-                "output_dir": dir.path().join("packs").display().to_string()
+                "output_dir": "packs"
             },
             "pack": {
                 "dissect_manifest": DISSECT,
@@ -523,7 +523,7 @@ mod tests {
             "outputs": {
                 "generated_format": "goz1",
                 "manifest_id": "test-pack-v1",
-                "output_dir": repo.path().join("packs").display().to_string()
+                "output_dir": "packs"
             },
             "pack": {
                 "dissect_manifest": DISSECT,
@@ -600,7 +600,10 @@ mod tests {
             "outputs": {
                 "generated_format": "goz1",
                 "manifest_id": "test-pack-v1",
-                "output_dir": dir.join("packs").display().to_string()
+                // A relative dir keeps the random tempdir name out of the
+                // recipe: the schema refuses paths containing "awq"/"gptq",
+                // which a random suffix can spell by chance.
+                "output_dir": "packs"
             },
             "pack": {
                 "dissect_manifest": DISSECT,

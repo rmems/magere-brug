@@ -78,42 +78,49 @@ pub fn store_registry(registry: &ArtifactRegistry, registry_file: &Path) -> Resu
 /// single lock file, and so an atomic write updates the real file instead of
 /// replacing the symlink that pointed at it.
 fn registry_identity(registry_file: &Path) -> PathBuf {
-    let mut resolved = registry_file.to_path_buf();
-    for _ in 0..8 {
-        let Ok(meta) = std::fs::symlink_metadata(&resolved) else {
-            break;
-        };
-        if !meta.file_type().is_symlink() {
-            break;
-        }
-        let Ok(target) = std::fs::read_link(&resolved) else {
-            break;
-        };
-        resolved = if target.is_absolute() {
-            target
-        } else {
-            resolved
-                .parent()
-                .unwrap_or_else(|| Path::new("."))
-                .join(target)
-        };
-    }
+    let resolved = follow_final_symlink(registry_file);
     if let Ok(canonical) = std::fs::canonicalize(&resolved) {
         return canonical;
     }
     // The file does not exist yet: canonicalize its parent so lexical and
     // symlinked-directory aliases still converge on the same lock name.
-    match (
-        resolved
-            .parent()
-            .filter(|parent| !parent.as_os_str().is_empty()),
-        resolved.file_name(),
-    ) {
-        (Some(parent), Some(name)) => std::fs::canonicalize(parent)
-            .map(|parent| parent.join(name))
-            .unwrap_or_else(|_| registry_file.to_path_buf()),
-        _ => registry_file.to_path_buf(),
+    canonicalize_parent(&resolved).unwrap_or_else(|| registry_file.to_path_buf())
+}
+
+/// Follow a final-component symlink (and short chains) so a write through an
+/// alias lands on the real file instead of replacing the link.
+fn follow_final_symlink(path: &Path) -> PathBuf {
+    let mut resolved = path.to_path_buf();
+    for _ in 0..8 {
+        match symlink_target(&resolved) {
+            Some(target) => resolved = target,
+            None => return resolved,
+        }
     }
+    resolved
+}
+
+fn symlink_target(path: &Path) -> Option<PathBuf> {
+    let meta = std::fs::symlink_metadata(path).ok()?;
+    if !meta.file_type().is_symlink() {
+        return None;
+    }
+    let target = std::fs::read_link(path).ok()?;
+    Some(if target.is_absolute() {
+        target
+    } else {
+        path.parent().unwrap_or_else(|| Path::new(".")).join(target)
+    })
+}
+
+fn canonicalize_parent(path: &Path) -> Option<PathBuf> {
+    let parent = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())?;
+    let name = path.file_name()?;
+    std::fs::canonicalize(parent)
+        .ok()
+        .map(|parent| parent.join(name))
 }
 
 fn lock_path(registry_file: &Path) -> PathBuf {

@@ -80,31 +80,52 @@ fn resolve_source_ref(
     recipe: &Recipe,
     registry: &ArtifactRegistry,
 ) -> Result<PathBuf, String> {
+    if let Some(resolved) = resolve_manifest_path_reference(raw, recipe)? {
+        return Ok(resolved);
+    }
+    resolve_path_or_registry_reference(raw, registry)
+}
+
+/// Resolve a `*.json`-looking reference against the recipe's search rules.
+///
+/// Returns `Ok(None)` when `raw` is not manifest-path shaped, or when it is
+/// shaped like one but none of the file rules apply — the caller then falls
+/// through to plain-path and registry-id resolution.
+fn resolve_manifest_path_reference(raw: &str, recipe: &Recipe) -> Result<Option<PathBuf>, String> {
     use crate::recipe::resolve::{reference_escapes_upward, reference_is_manifest_path};
 
-    if reference_is_manifest_path(raw) {
-        if let Some(resolved) = recipe.resolve_reference(raw) {
-            return Ok(resolved);
-        }
-        let as_manifest_path = Path::new(raw);
-        if as_manifest_path.is_absolute() {
-            return canonicalize_existing(as_manifest_path, "source manifest");
-        }
-        if reference_escapes_upward(raw) {
-            return Err(format!(
-                "inputs.source_manifest '{}' must not contain '..' segments; recipe inputs are \
-                 resolved within the repository that contains the recipe",
-                raw
-            ));
-        }
-        if looks_like_filesystem_path(raw) {
-            return Err(format!(
-                "Failed to load source manifest '{}': file not found",
-                raw
-            ));
-        }
+    if !reference_is_manifest_path(raw) {
+        return Ok(None);
     }
+    if let Some(resolved) = recipe.resolve_reference(raw) {
+        return Ok(Some(resolved));
+    }
+    let as_manifest_path = Path::new(raw);
+    if as_manifest_path.is_absolute() {
+        return canonicalize_existing(as_manifest_path, "source manifest").map(Some);
+    }
+    if reference_escapes_upward(raw) {
+        return Err(format!(
+            "inputs.source_manifest '{}' must not contain '..' segments; recipe inputs are \
+             resolved within the repository that contains the recipe",
+            raw
+        ));
+    }
+    if looks_like_filesystem_path(raw) {
+        return Err(format!(
+            "Failed to load source manifest '{}': file not found",
+            raw
+        ));
+    }
+    Ok(None)
+}
 
+/// Resolve `raw` as an existing filesystem path, else as a registry slug or
+/// manifest_id carrying a stored `manifest_path`.
+fn resolve_path_or_registry_reference(
+    raw: &str,
+    registry: &ArtifactRegistry,
+) -> Result<PathBuf, String> {
     let as_path = Path::new(raw);
     if as_path.exists() {
         return Ok(as_path.to_path_buf());
@@ -119,6 +140,10 @@ fn resolve_source_ref(
                 raw
             )
         })?;
+    stored_entry_manifest_path(raw, entry)
+}
+
+fn stored_entry_manifest_path(raw: &str, entry: &RegistryEntry) -> Result<PathBuf, String> {
     match &entry.manifest_path {
         Some(path) if path.is_file() => Ok(path.clone()),
         Some(path) => Err(format!(
@@ -205,11 +230,25 @@ fn split_planned(path: &Path) -> Result<(&Path, &OsStr), String> {
 
 fn resolve_under_parent(parent: &Path, file_name: &OsStr) -> Result<PathBuf, String> {
     if parent.as_os_str().is_empty() {
-        let cwd = std::env::current_dir()
-            .map_err(|e| format!("Failed to resolve current directory: {e}"))?;
-        return Ok(cwd.join(file_name));
+        return current_dir().map(|cwd| cwd.join(file_name));
     }
 
+    let (ancestor, suffix) = nearest_existing_ancestor(parent, file_name);
+    if ancestor.as_os_str().is_empty() {
+        return current_dir().map(|cwd| cwd.join(parent).join(file_name));
+    }
+
+    let canonical_parent = canonicalize_existing(&ancestor, "output dir")?;
+    Ok(canonical_parent.join(suffix))
+}
+
+fn current_dir() -> Result<PathBuf, String> {
+    std::env::current_dir().map_err(|e| format!("Failed to resolve current directory: {e}"))
+}
+
+/// Walk `parent` up to the nearest existing ancestor, accumulating the missing
+/// tail into `suffix`. An empty `ancestor` means no component exists.
+fn nearest_existing_ancestor(parent: &Path, file_name: &OsStr) -> (PathBuf, PathBuf) {
     let mut suffix = PathBuf::from(file_name);
     let mut cursor = parent;
     while !cursor.as_os_str().is_empty() && !cursor.exists() {
@@ -218,15 +257,7 @@ fn resolve_under_parent(parent: &Path, file_name: &OsStr) -> Result<PathBuf, Str
         }
         cursor = cursor.parent().unwrap_or(Path::new(""));
     }
-
-    if cursor.as_os_str().is_empty() {
-        let cwd = std::env::current_dir()
-            .map_err(|e| format!("Failed to resolve current directory: {e}"))?;
-        return Ok(cwd.join(parent).join(file_name));
-    }
-
-    let canonical_parent = canonicalize_existing(cursor, "output dir")?;
-    Ok(canonical_parent.join(suffix))
+    (cursor.to_path_buf(), suffix)
 }
 
 fn paths_alias(left: &Path, right: &Path) -> bool {

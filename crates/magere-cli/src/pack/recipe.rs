@@ -46,6 +46,14 @@ pub fn load_pack_recipe(recipe_path: &Path) -> Result<Recipe, String> {
     recipe
         .validate_schema_document()
         .map_err(|e| format!("Failed to parse recipe '{}': {}", recipe_path.display(), e))?;
+    validate_pack_recipe(&recipe)?;
+    require_pack_config(&recipe)?;
+    Ok(recipe)
+}
+
+/// Semantic gates that run after schema validation: this runner only executes
+/// pack recipe types that emit GOZ1.
+fn validate_pack_recipe(recipe: &Recipe) -> Result<(), String> {
     if !matches!(
         recipe.recipe_type,
         RecipeType::Goz1Pack | RecipeType::TernaryPack
@@ -66,8 +74,7 @@ pub fn load_pack_recipe(recipe_path: &Path) -> Result<Recipe, String> {
             recipe.recipe_id, format
         ));
     }
-    require_pack_config(&recipe)?;
-    Ok(recipe)
+    Ok(())
 }
 
 pub(crate) fn require_pack_config(recipe: &Recipe) -> Result<PackConfig, String> {

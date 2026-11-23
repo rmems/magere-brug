@@ -24,15 +24,17 @@ impl Recipe {
     ) -> Result<String, String> {
         let source = self.load_register_source()?;
         let registry_path = self.registry_destination(registry_override);
-        // Resolve the registry destination before emitting anything: a
-        // dangling symlink must name its target for the lock, the load, the
-        // collision checks, and the store alike. The spelled path stays for
-        // the report; every filesystem operation uses the destination.
-        let registry_dest = crate::registry_io::registry_identity(&registry_path);
+        // Pin the spelled registry's directory entry before taking the lock:
+        // a symlinked directory must not switch targets while the lock is
+        // held, or emission and the registry store would land in different
+        // releases. The destination then resolves from that pinned entry, so
+        // lock, load, collision checks, and store all name the same file.
+        let registry_entry = crate::registry_io::entry_identity(&registry_path)?;
+        let registry_dest = crate::registry_io::registry_identity(&registry_entry);
         let _lock = crate::registry_io::RegistryLock::acquire(&registry_dest)?;
         let registry = prepare_registry_update(&source.manifest, &source.path, &registry_dest)?;
         let (emitted_manifest, emitted_handoff) =
-            self.emit_registered_artifacts(&source, &registry_path, &registry_dest)?;
+            self.emit_registered_artifacts(&source, &registry_entry, &registry_dest)?;
         crate::registry_io::store_registry(&registry, &registry_dest)?;
         Ok(format_register_report(
             self,
@@ -72,9 +74,9 @@ impl Recipe {
         registry_entry: &Path,
         registry_dest: &Path,
     ) -> Result<(PathBuf, PathBuf), String> {
-        // The emit base derives from the spelled registry path: a symlinked
+        // The emit base derives from the pinned registry entry: a symlinked
         // registry still emits beside where the user pointed, not beside the
-        // link's target.
+        // link's target, and a directory alias cannot move mid-apply.
         let base = prepare_emit_tree(&emit_base_dir(self, registry_entry))?;
         let manifests_dir = base.join("manifests");
         let handoff_dir = base.join("handoff");

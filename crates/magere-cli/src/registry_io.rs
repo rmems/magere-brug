@@ -8,8 +8,9 @@
 use crate::atomic_write::write_bytes_atomically;
 use crate::registry::ArtifactRegistry;
 use fs4::FileExt;
+use std::ffi::OsStr;
 use std::fs::{File, OpenOptions};
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 /// Exclusive lock on `{registry}.lock`, held for a registry read-modify-write.
 pub struct RegistryLock {
@@ -149,6 +150,78 @@ fn canonicalize_parent(path: &Path) -> Option<PathBuf> {
         .map(|parent| parent.join(name))
 }
 
+/// Resolve `path` as the directory entry it names, tolerating ancestors that
+/// do not exist yet: the deepest existing ancestor is canonicalized and the
+/// missing tail plus the literal file name is re-appended. A final-component
+/// symlink is never followed — the link itself is the entry — and directory
+/// aliases are frozen at call time, so a directory symlink retargeted while a
+/// lock is held cannot move the entry out from under the resolved registry
+/// destination.
+pub(crate) fn entry_identity(path: &Path) -> Result<PathBuf, String> {
+    let file_name = path
+        .file_name()
+        .ok_or_else(|| format!("path '{}' must name a file", path.display()))?;
+    let parent = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    let (ancestor, suffix) = nearest_existing_ancestor(parent, file_name);
+    let resolved = if ancestor.as_os_str().is_empty() {
+        std::env::current_dir()
+            .map_err(|e| format!("Failed to resolve current directory: {e}"))?
+            .join(parent)
+            .join(file_name)
+    } else {
+        ancestor
+            .canonicalize()
+            .map_err(|e| {
+                format!(
+                    "failed to resolve path directory '{}': {e}",
+                    ancestor.display()
+                )
+            })?
+            .join(suffix)
+    };
+    Ok(normalize_lexically(&resolved))
+}
+
+/// Walk `parent` up to the nearest existing ancestor, accumulating the missing
+/// tail (file name included) into `suffix`. An empty `ancestor` means no
+/// component exists. Missing `..` components are kept in `suffix` — they
+/// still matter once the missing directories exist.
+fn nearest_existing_ancestor(parent: &Path, file_name: &OsStr) -> (PathBuf, PathBuf) {
+    let mut suffix = PathBuf::from(file_name);
+    let mut cursor = parent;
+    while !cursor.as_os_str().is_empty() && !cursor.exists() {
+        match cursor.file_name() {
+            Some(name) => suffix = PathBuf::from(name).join(&suffix),
+            None if cursor.ends_with("..") => suffix = PathBuf::from("..").join(&suffix),
+            None => {}
+        }
+        cursor = cursor.parent().unwrap_or(Path::new(""));
+    }
+    (cursor.to_path_buf(), suffix)
+}
+
+/// Fold `.`/`..` lexically so a planned path whose missing tail escapes an
+/// ancestor compares equal to the path the writer will actually create. `..`
+/// that climbs past the root is dropped, as the filesystem would; `..` under
+/// a relative root is preserved.
+fn normalize_lexically(path: &Path) -> PathBuf {
+    let mut normalized = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir if normalized.file_name().is_some() => {
+                normalized.pop();
+            }
+            Component::ParentDir if !normalized.has_root() => normalized.push(".."),
+            other => normalized.push(other.as_os_str()),
+        }
+    }
+    normalized
+}
+
 fn lock_path(registry_file: &Path) -> PathBuf {
     let mut path = registry_file.as_os_str().to_os_string();
     path.push(".lock");
@@ -231,6 +304,46 @@ mod tests {
             .err()
             .expect("an alias whose target ends in '.lock' must be refused");
         assert!(err.contains("'.lock'"), "{err}");
+    }
+
+    #[test]
+    fn entry_identity_tolerates_missing_ancestors_and_folds_dotdot() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let root = dir.path().canonicalize().unwrap();
+        let spelled = root
+            .join("missing")
+            .join("..")
+            .join("planned")
+            .join("registry.json");
+        let entry = entry_identity(&spelled).unwrap();
+        assert_eq!(entry, root.join("planned").join("registry.json"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn entry_identity_freezes_a_directory_alias() {
+        use std::os::unix::fs::symlink;
+
+        let dir = tempfile::TempDir::new().unwrap();
+        let root = dir.path().canonicalize().unwrap();
+        let v1 = root.join("v1");
+        let v2 = root.join("v2");
+        std::fs::create_dir_all(&v1).unwrap();
+        std::fs::create_dir_all(&v2).unwrap();
+        let alias = root.join("current");
+        symlink(&v1, &alias).unwrap();
+
+        let spelled = alias.join("registry.json");
+        let pinned = entry_identity(&spelled).unwrap();
+        assert_eq!(pinned, v1.join("registry.json"));
+
+        // Retarget the directory alias: the pinned entry still names v1, so a
+        // caller that resolved once keeps lock, load, store, and emission on
+        // the same release.
+        std::fs::remove_file(&alias).unwrap();
+        symlink(&v2, &alias).unwrap();
+        assert_eq!(registry_identity(&pinned), v1.join("registry.json"));
+        assert_ne!(entry_identity(&spelled).unwrap(), pinned);
     }
 
     #[test]

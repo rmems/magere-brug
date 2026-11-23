@@ -404,7 +404,7 @@ fn test_apply_emit_base_resolves_symlinked_registry_directories() {
     symlink(&v2, project.join("current")).expect("dir symlink");
     let spelled = project.join("current").join("registry.json");
     let target = shared.join("registry.json");
-    symlink(&target, &v2.join("registry.json")).expect("file symlink");
+    symlink(&target, v2.join("registry.json")).expect("file symlink");
 
     recipe
         .apply(Some(&spelled))

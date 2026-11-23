@@ -7,7 +7,6 @@ use magere_grok_process::types::InputFormat;
 use serde_json::json;
 use std::fs;
 use std::path::Path;
-use tempfile::TempDir;
 
 #[test]
 fn end_to_end_writes_parseable_goz1_and_registers_it() {
@@ -74,12 +73,16 @@ fn a_foreign_registry_entry_is_not_displaced_by_a_new_pack() {
     assert!(err.contains("test-pack-v2.goz1"), "{}", err);
     assert!(err.contains("test-pack-v2.manifest.json"), "{}", err);
     assert!(err.contains("<source model slug>_goz1"), "{}", err);
+    assert!(err.contains("Nothing was written"), "{}", err);
     assert!(
         !err.contains("set a different `outputs.manifest_id`"),
         "{}",
         err
     );
-    assert!(h.output_dir.join("test-pack-v2.goz1").exists());
+    assert!(
+        !h.output_dir.join("test-pack-v2.goz1").exists(),
+        "a slug collision must be refused before the pack is written"
+    );
 
     let registry =
         ArtifactRegistry::from_json(&fs::read_to_string(&h.registry_path).unwrap()).unwrap();
@@ -108,7 +111,7 @@ fn output_dir_override_wins_over_the_recipe() {
 
 #[test]
 fn tracks_whether_input_dir_exists() {
-    let dir = TempDir::new().unwrap();
+    let dir = test_dir();
     let present = dir.path().join("weights");
     fs::create_dir_all(&present).unwrap();
     let mut recipe = base_recipe(&dir.path().join("packs"));
@@ -118,7 +121,7 @@ fn tracks_whether_input_dir_exists() {
     assert!(!outcome.input_dir_missing);
     assert!(!format_outcome(&outcome).contains("does not exist on disk"));
 
-    let dir = TempDir::new().unwrap();
+    let dir = test_dir();
     let mut recipe = base_recipe(&dir.path().join("packs"));
     recipe["pack"]["input_dir"] = json!(dir.path().join("gone").display().to_string());
     let h = harness_from(dir, &recipe);
@@ -130,14 +133,16 @@ fn tracks_whether_input_dir_exists() {
 #[test]
 fn shipped_example_recipe_is_well_formed_and_runnable() {
     let recipe = load_pack_recipe(Path::new(EXAMPLE_RECIPE)).expect("example recipe parses");
-    assert_eq!(recipe.recipe_type, "ternary_pack");
+    assert_eq!(recipe.recipe_type, crate::recipe::RecipeType::TernaryPack);
     assert_eq!(
-        recipe.pack.as_ref().unwrap().input_format,
+        crate::pack::recipe::require_pack_config(&recipe)
+            .unwrap()
+            .input_format,
         Some(InputFormat::NpyDir)
     );
     let (source_manifest, dissect, source_family, dissect_family) = shipped_example_paths();
     assert_eq!(source_family, dissect_family);
-    let dir = TempDir::new().unwrap();
+    let dir = test_dir();
     let mut as_absolute: serde_json::Value =
         serde_json::from_str(&fs::read_to_string(EXAMPLE_RECIPE).unwrap()).unwrap();
     as_absolute["inputs"]["source_manifest"] = json!(source_manifest.display().to_string());
@@ -159,7 +164,7 @@ fn shipped_example_recipe_is_well_formed_and_runnable() {
 
 #[test]
 fn goz1_pack_type_is_accepted_too() {
-    let dir = TempDir::new().unwrap();
+    let dir = test_dir();
     let mut recipe = base_recipe(&dir.path().join("packs"));
     recipe["type"] = json!("goz1_pack");
     let h = harness_from(dir, &recipe);
@@ -169,7 +174,7 @@ fn goz1_pack_type_is_accepted_too() {
 
 #[test]
 fn padded_manifest_id_agrees_between_filename_and_manifest() {
-    let dir = TempDir::new().unwrap();
+    let dir = test_dir();
     let packs = dir.path().join("packs");
     let mut recipe = base_recipe(&packs);
     recipe["outputs"]["manifest_id"] = json!("  padded-pack-v1\t");
@@ -186,13 +191,13 @@ fn padded_manifest_id_agrees_between_filename_and_manifest() {
 }
 
 #[test]
-fn a_mixed_pack_and_saaq_recipe_still_loads() {
-    let dir = TempDir::new().unwrap();
+fn a_pack_recipe_rejects_a_saaq_block() {
+    let dir = test_dir();
     let mut recipe = base_recipe(&dir.path().join("packs"));
     recipe["saaq"] = json!({ "snn_steps": 4 });
     let h = harness_from(dir, &recipe);
-    let parsed = load_pack_recipe(&h.recipe_path).expect("mixed recipe loads");
-    assert!(parsed.saaq.is_some());
+    let err = load_pack_recipe(&h.recipe_path).unwrap_err();
+    assert!(err.contains("saaq"), "{err}");
 }
 
 #[test]
@@ -230,7 +235,7 @@ fn records_the_dissect_manifest_in_source_lineage() {
 
 #[test]
 fn lineage_keeps_source_checksum_only_when_input_dir_is_the_source_path() {
-    let dir = TempDir::new().unwrap();
+    let dir = test_dir();
     let mut recipe = base_recipe(&dir.path().join("packs"));
     recipe["pack"].as_object_mut().unwrap().remove("input_dir");
     let h = harness_from(dir, &recipe);
@@ -260,7 +265,7 @@ fn pack_goz1_command_renders_a_report() {
 
 #[test]
 fn allow_model_mismatch_opts_out_of_the_family_check() {
-    let dir = TempDir::new().unwrap();
+    let dir = test_dir();
     let mut recipe = base_recipe(&dir.path().join("packs"));
     recipe["inputs"]["source_manifest"] = json!(REDPAJAMA_MANIFEST);
     recipe["pack"]["allow_model_mismatch"] = json!(true);
@@ -271,7 +276,7 @@ fn allow_model_mismatch_opts_out_of_the_family_check() {
 
 #[test]
 fn source_manifest_can_be_a_registry_slug() {
-    let dir = TempDir::new().unwrap();
+    let dir = test_dir();
     let mut registry = ArtifactRegistry::new();
     let source = Manifest::from_file(SOURCE_MANIFEST).unwrap();
     registry

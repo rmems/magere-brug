@@ -76,6 +76,54 @@ fn test_apply_register_writes_registry() {
 }
 
 #[test]
+fn test_apply_rejects_registry_paths_with_parent_dir_components() {
+    let (_dir, recipe) = recipe_in_temp_dir(
+        r#"{
+          "recipe_id": "register-dotdot-registry",
+          "type": "register",
+          "inputs": { "source_manifest": "manifest.json" }
+        }"#,
+        &sample_manifest_json("sample-v1", "sample_model", "safetensors"),
+    );
+
+    // A missing directory before `..` can hide a symlink, so the spelled
+    // entry and the filesystem lookup can name different registries.
+    let bad = _dir.path().join("nested").join("..").join("registry.json");
+    let err = recipe.apply(Some(&bad)).unwrap_err();
+    assert!(err.contains("'..'"), "{err}");
+}
+
+#[test]
+fn test_apply_register_stores_the_source_manifest_path() {
+    let (dir, recipe) = recipe_in_temp_dir(
+        r#"{
+          "recipe_id": "register-path-apply",
+          "type": "register",
+          "inputs": { "source_manifest": "manifest.json" }
+        }"#,
+        &sample_manifest_json("sample-v1", "sample_model", "safetensors"),
+    );
+
+    let registry_path = dir.path().join("registry.json");
+    recipe
+        .apply(Some(&registry_path))
+        .expect("register applies");
+
+    let registry =
+        ArtifactRegistry::from_json(&std::fs::read_to_string(&registry_path).unwrap()).unwrap();
+    let stored = registry
+        .lookup("sample_model")
+        .unwrap()
+        .manifest_path
+        .clone()
+        .expect("apply must record the source manifest path");
+    assert_eq!(
+        stored,
+        std::fs::canonicalize(dir.path().join("manifest.json")).unwrap()
+    );
+}
+
+#[test]
 fn test_apply_register_is_idempotent() {
     let (dir, recipe) = recipe_in_temp_dir(
         r#"{
@@ -167,7 +215,7 @@ fn test_apply_pack_types_name_owning_issue() {
         &sample_manifest_json("sample-v1", "sample_model", "safetensors"),
     );
     let err = recipe.apply(None).expect_err("must not execute");
-    assert!(err.contains("#19"), "unexpected error: {err}");
+    assert!(err.contains("pack-goz1"), "unexpected error: {err}");
 }
 
 #[test]
@@ -229,7 +277,7 @@ fn test_summary_reports_type_and_runner_owner() {
 
     let summary = recipe.summary();
     assert!(summary.contains("ternary_pack"), "{summary}");
-    assert!(summary.contains("#19"), "{summary}");
+    assert!(summary.contains("pack-goz1"), "{summary}");
     assert!(summary.contains("wikitext-2"), "{summary}");
     assert!(summary.contains("myelin_accelerator"), "{summary}");
 }
@@ -308,4 +356,84 @@ fn test_pack_rejects_unpackable_resolved_manifest_format() {
         .validate()
         .expect_err("a pack recipe over a gguf manifest must not validate");
     assert!(err.contains("cannot pack source format 'gguf'"), "{err}");
+}
+
+#[test]
+#[cfg(unix)]
+fn test_apply_emit_base_follows_the_spelled_registry_path() {
+    use std::os::unix::fs::symlink;
+
+    let (dir, recipe) = recipe_in_temp_dir(
+        r#"{
+          "recipe_id": "register-symlinked-registry",
+          "type": "register",
+          "inputs": { "source_manifest": "manifest.json" }
+        }"#,
+        &sample_manifest_json("sample-v1", "sample_model", "safetensors"),
+    );
+
+    // A symlinked registry: emitted artifacts must land beside the spelled
+    // path, not beside the link's target.
+    let spelled_dir = dir.path().join("project").join("artifacts");
+    let target_dir = dir.path().join("shared");
+    std::fs::create_dir_all(&spelled_dir).expect("mkdir spelled dir");
+    std::fs::create_dir_all(&target_dir).expect("mkdir target dir");
+    let spelled = spelled_dir.join("registry.json");
+    let target = target_dir.join("registry.json");
+    symlink(&target, &spelled).expect("registry symlink");
+
+    recipe
+        .apply(Some(&spelled))
+        .expect("register recipe applies");
+
+    assert!(
+        spelled_dir.join("manifests").is_dir(),
+        "emitted manifests must land beside the spelled registry path"
+    );
+    assert!(
+        !target_dir.join("manifests").exists(),
+        "the link target's directory must not receive emitted artifacts"
+    );
+    assert!(target.is_file(), "the registry is stored through the link");
+}
+
+#[test]
+#[cfg(unix)]
+fn test_apply_emit_base_resolves_symlinked_registry_directories() {
+    use std::os::unix::fs::symlink;
+
+    let (dir, recipe) = recipe_in_temp_dir(
+        r#"{
+          "recipe_id": "register-symlinked-dirs",
+          "type": "register",
+          "inputs": { "source_manifest": "manifest.json" }
+        }"#,
+        &sample_manifest_json("sample-v1", "sample_model", "safetensors"),
+    );
+
+    // `project/current` is a symlinked directory and the registry file inside
+    // it is itself a symlink: the emit base must resolve the directory alias
+    // while still emitting beside the spelled registry.
+    let project = dir.path().join("project");
+    let v2 = project.join("v2");
+    let shared = dir.path().join("shared");
+    std::fs::create_dir_all(&v2).expect("mkdir v2");
+    std::fs::create_dir_all(&shared).expect("mkdir shared");
+    symlink(&v2, project.join("current")).expect("dir symlink");
+    let spelled = project.join("current").join("registry.json");
+    let target = shared.join("registry.json");
+    symlink(&target, v2.join("registry.json")).expect("file symlink");
+
+    recipe
+        .apply(Some(&spelled))
+        .expect("register recipe applies through aliases");
+
+    assert!(
+        v2.join("manifests").is_dir(),
+        "emitted manifests must land in the resolved registry directory"
+    );
+    assert!(
+        target.is_file(),
+        "the registry is stored at the link target"
+    );
 }

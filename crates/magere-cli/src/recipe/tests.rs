@@ -307,6 +307,90 @@ fn test_pack_recipe_rejects_unpackable_source_format() {
 }
 
 #[test]
+fn test_pack_recipe_explicit_input_format_allows_unpackable_manifest_format() {
+    // `pack.input_format` declares how the packer reads the input bytes;
+    // `pack-goz1` honors it even when the manifest's own format is not directly
+    // packable, so validation must accept what the runner runs.
+    let (_dir, recipe) = recipe_in_temp_dir(
+        r#"{
+          "recipe_id": "pack-gguf-source-override",
+          "type": "ternary_pack",
+          "inputs": { "source_manifest": "manifest.json" },
+          "outputs": { "generated_format": "goz1" },
+          "pack": { "input_format": "safetensors" }
+        }"#,
+        &sample_manifest_json("sample-v1", "sample_model", "gguf"),
+    );
+    recipe
+        .validate_semantics()
+        .expect("explicit pack.input_format permits a non-packable manifest format");
+}
+
+#[test]
+fn test_pack_recipe_declared_source_format_with_input_format_override() {
+    // With `pack.input_format` set, `inputs.source_format` is only an
+    // assertion about the manifest's format — the packer never reads the
+    // bytes as that format — so the semantic layer must accept what
+    // `pack-goz1` runs. (The schema still restricts the enum for pack
+    // recipes; this pins the standalone semantic contract.)
+    let (_dir, recipe) = recipe_in_temp_dir(
+        r#"{
+          "recipe_id": "pack-gguf-declared-override",
+          "type": "ternary_pack",
+          "inputs": { "source_manifest": "manifest.json", "source_format": "gguf" },
+          "outputs": { "generated_format": "goz1" },
+          "pack": { "input_format": "safetensors" }
+        }"#,
+        &sample_manifest_json("sample-v1", "sample_model", "gguf"),
+    );
+    recipe
+        .validate_semantics()
+        .expect("declared source_format is a manifest assertion once pack.input_format is set");
+}
+
+#[test]
+fn test_pack_recipe_rejects_parent_traversal_in_declared_outputs() {
+    // `pack-goz1` refuses '..' in output paths; validation must reject the
+    // same recipes instead of passing them until run time.
+    for outputs in [
+        r#""output_dir": "../packs""#,
+        r#""artifact_path": "../escape.goz1""#,
+    ] {
+        let (_dir, recipe) = recipe_in_temp_dir(
+            &format!(
+                r#"{{
+                  "recipe_id": "pack-traversal-output",
+                  "type": "ternary_pack",
+                  "inputs": {{ "source_manifest": "manifest.json" }},
+                  "outputs": {{ "generated_format": "goz1", {outputs} }}
+                }}"#
+            ),
+            &sample_manifest_json("sample-v1", "sample_model", "safetensors"),
+        );
+        let err = recipe
+            .validate()
+            .expect_err("'..' in a declared pack output path must fail validation");
+        assert!(err.contains("'..'"), "{err}");
+    }
+}
+
+#[test]
+fn test_pack_recipe_defaults_to_registering() {
+    let recipe = Recipe::from_json(
+        r#"{
+          "recipe_id": "pack-default-register",
+          "type": "goz1_pack",
+          "outputs": { "generated_format": "goz1" }
+        }"#,
+    )
+    .expect("parses");
+    assert!(
+        recipe.registers_output(recipe.outputs.as_ref().unwrap()),
+        "pack-goz1 registers by default, so inspect must report the same"
+    );
+}
+
+#[test]
 fn test_register_recipe_accepts_gguf_source_format() {
     let (_dir, recipe) = recipe_in_temp_dir(
         r#"{

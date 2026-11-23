@@ -1,7 +1,7 @@
 {
   "recipe_id": "redpajama-register-safetensors",
   "type": "register",
-  "description": "Register the RedPajama-INCITE-7B-Chat safetensors baseline ahead of a ternary pack. The pack itself is a separate recipe and a separate runner (issue #19).",
+  "description": "Register the RedPajama-INCITE-7B-Chat safetensors baseline ahead of a ternary pack. The pack itself is a separate recipe run by `magere pack-goz1`.",
   "inputs": {
     "source_manifest": "manifests/examples/redpajama-incite-7b-chat.json",
     "source_format": "safetensors"

@@ -37,6 +37,37 @@ pub(super) struct Harness {
     pub(super) registry_path: PathBuf,
 }
 
+/// A temp dir whose name cannot trip the recipe schema's AWQ/GPTQ ban:
+/// `TempDir::new` injects six random characters that can spell "gptq"/"awq"
+/// by chance, and pack recipes embed `outputs.output_dir` — a rejected
+/// string fails `load_pack_recipe` before the test reaches its subject.
+/// pid + counter keep the deterministic name unique; rand_bytes(0) leaves
+/// no random component at all.
+pub(super) fn test_dir() -> TempDir {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    static COUNTER: AtomicUsize = AtomicUsize::new(0);
+    // A crashed run can leave a same-named directory behind when the OS
+    // recycles the pid; bump the counter until creation succeeds.
+    for _ in 0..8 {
+        let prefix = format!(
+            "mb-{}-{}-",
+            std::process::id(),
+            COUNTER.fetch_add(1, Ordering::Relaxed)
+        );
+        match tempfile::Builder::new()
+            .prefix(&prefix)
+            .rand_bytes(0)
+            .tempdir()
+        {
+            Ok(dir) => return dir,
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => panic!("failed to create a test directory: {error}"),
+        }
+    }
+    panic!("could not create a uniquely named test directory");
+}
+
 pub(super) fn write_recipe(dir: &Path, name: &str, recipe: &serde_json::Value) -> PathBuf {
     let path = dir.join(name);
     fs::write(&path, serde_json::to_string_pretty(recipe).unwrap()).unwrap();
@@ -78,7 +109,8 @@ pub(super) fn base_recipe(output_dir: &Path) -> serde_json::Value {
 
 pub(super) fn shipped_example_paths() -> (std::path::PathBuf, std::path::PathBuf, String, String) {
     let recipe = load_pack_recipe(Path::new(EXAMPLE_RECIPE)).expect("example recipe parses");
-    let pack = recipe.pack.as_ref().expect("example carries a pack block");
+    let pack =
+        crate::pack::recipe::require_pack_config(&recipe).expect("example carries a pack block");
     let root = Path::new(REPO_ROOT);
     let source_manifest = root.join(
         recipe
@@ -105,7 +137,7 @@ pub(super) fn shipped_example_paths() -> (std::path::PathBuf, std::path::PathBuf
 }
 
 pub(super) fn default_harness() -> Harness {
-    let dir = TempDir::new().unwrap();
+    let dir = test_dir();
     let recipe = base_recipe(&dir.path().join("packs"));
     harness_from(dir, &recipe)
 }

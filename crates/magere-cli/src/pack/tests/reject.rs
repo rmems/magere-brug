@@ -4,11 +4,10 @@ use crate::pack::*;
 use magere_grok_process::types::InputFormat;
 use serde_json::json;
 use std::fs;
-use tempfile::TempDir;
 
 #[test]
 fn rejects_non_pack_recipe_type() {
-    let dir = TempDir::new().unwrap();
+    let dir = test_dir();
     let mut recipe = base_recipe(&dir.path().join("packs"));
     recipe["type"] = json!("saaq");
     let h = harness_from(dir, &recipe);
@@ -19,7 +18,7 @@ fn rejects_non_pack_recipe_type() {
 
 #[test]
 fn rejects_missing_pack_block() {
-    let dir = TempDir::new().unwrap();
+    let dir = test_dir();
     let mut recipe = base_recipe(&dir.path().join("packs"));
     recipe.as_object_mut().unwrap().remove("pack");
     let h = harness_from(dir, &recipe);
@@ -29,7 +28,7 @@ fn rejects_missing_pack_block() {
 
 #[test]
 fn rejects_unknown_pack_key() {
-    let dir = TempDir::new().unwrap();
+    let dir = test_dir();
     let mut recipe = base_recipe(&dir.path().join("packs"));
     recipe["pack"]["bit_width"] = json!(2);
     let h = harness_from(dir, &recipe);
@@ -39,7 +38,7 @@ fn rejects_unknown_pack_key() {
 
 #[test]
 fn rejects_missing_dissect_manifest() {
-    let dir = TempDir::new().unwrap();
+    let dir = test_dir();
     let mut recipe = base_recipe(&dir.path().join("packs"));
     recipe["pack"]["dissect_manifest"] = json!("/nonexistent/dissect.json");
     let h = harness_from(dir, &recipe);
@@ -54,17 +53,17 @@ fn rejects_missing_dissect_manifest() {
 
 #[test]
 fn rejects_missing_source_manifest() {
-    let dir = TempDir::new().unwrap();
+    let dir = test_dir();
     let mut recipe = base_recipe(&dir.path().join("packs"));
     recipe["inputs"] = json!({});
     let h = harness_from(dir, &recipe);
     let err = run_pack_recipe(&h.recipe_path, Some(&h.registry_path), None).unwrap_err();
-    assert!(err.contains("inputs.source_manifest"), "{}", err);
+    assert!(err.contains("source_manifest"), "{}", err);
 }
 
 #[test]
 fn rejects_unwritable_output_dir() {
-    let dir = TempDir::new().unwrap();
+    let dir = test_dir();
     let blocker = dir.path().join("blocked");
     fs::write(&blocker, b"not a directory").unwrap();
     let recipe = base_recipe(&blocker.join("packs"));
@@ -75,7 +74,7 @@ fn rejects_unwritable_output_dir() {
 
 #[test]
 fn rejects_missing_output_dir_without_override() {
-    let dir = TempDir::new().unwrap();
+    let dir = test_dir();
     let mut recipe = base_recipe(&dir.path().join("packs"));
     recipe["outputs"]
         .as_object_mut()
@@ -88,7 +87,7 @@ fn rejects_missing_output_dir_without_override() {
 
 #[test]
 fn rejects_out_of_range_gif_threshold() {
-    let dir = TempDir::new().unwrap();
+    let dir = test_dir();
     let mut recipe = base_recipe(&dir.path().join("packs"));
     recipe["pack"]["gif_threshold"] = json!(4.2);
     let h = harness_from(dir, &recipe);
@@ -98,7 +97,7 @@ fn rejects_out_of_range_gif_threshold() {
 
 #[test]
 fn rejects_non_goz1_generated_format() {
-    let dir = TempDir::new().unwrap();
+    let dir = test_dir();
     let mut recipe = base_recipe(&dir.path().join("packs"));
     recipe["outputs"]["generated_format"] = json!("gguf");
     let h = harness_from(dir, &recipe);
@@ -108,7 +107,7 @@ fn rejects_non_goz1_generated_format() {
 
 #[test]
 fn rejects_manifest_id_with_path_separators() {
-    let dir = TempDir::new().unwrap();
+    let dir = test_dir();
     let mut recipe = base_recipe(&dir.path().join("packs"));
     recipe["outputs"]["manifest_id"] = json!("../escape");
     let h = harness_from(dir, &recipe);
@@ -118,7 +117,7 @@ fn rejects_manifest_id_with_path_separators() {
 
 #[test]
 fn rejects_a_misspelled_outputs_key() {
-    let dir = TempDir::new().unwrap();
+    let dir = test_dir();
     let mut recipe = base_recipe(&dir.path().join("packs"));
     let manifest_id = recipe["outputs"]["manifest_id"].take();
     recipe["outputs"]["manifest_ids"] = manifest_id;
@@ -130,7 +129,7 @@ fn rejects_a_misspelled_outputs_key() {
 
 #[test]
 fn rejects_a_misspelled_inputs_key() {
-    let dir = TempDir::new().unwrap();
+    let dir = test_dir();
     let mut recipe = base_recipe(&dir.path().join("packs"));
     let src = recipe["inputs"]["source_manifest"].take();
     recipe["inputs"]["source_manifests"] = src;
@@ -141,7 +140,7 @@ fn rejects_a_misspelled_inputs_key() {
 
 #[test]
 fn rejects_an_unknown_top_level_recipe_key() {
-    let dir = TempDir::new().unwrap();
+    let dir = test_dir();
     let mut recipe = base_recipe(&dir.path().join("packs"));
     recipe["output"] = recipe["outputs"].take();
     let h = harness_from(dir, &recipe);
@@ -150,8 +149,144 @@ fn rejects_an_unknown_top_level_recipe_key() {
 }
 
 #[test]
+fn rejects_output_dir_with_parent_traversal() {
+    let h = default_harness();
+    let err = run_pack_recipe(
+        &h.recipe_path,
+        Some(&h.registry_path),
+        Some(std::path::Path::new("../escape")),
+    )
+    .unwrap_err();
+    assert!(err.contains("'..'"), "{err}");
+    assert!(!h.output_dir.join("test-pack-v1.goz1").exists());
+}
+
+#[test]
+fn rejects_artifact_path_with_parent_traversal() {
+    let dir = test_dir();
+    let output_dir = dir.path().join("packs");
+    let mut recipe = base_recipe(&output_dir);
+    recipe["outputs"]["artifact_path"] = json!("../escape.goz1");
+    let h = harness_from(dir, &recipe);
+    let err = run_pack_recipe(&h.recipe_path, Some(&h.registry_path), None).unwrap_err();
+    assert!(err.contains("'..'"), "{err}");
+    assert!(!h.output_dir.join("test-pack-v1.goz1").exists());
+}
+
+#[test]
+fn refuses_a_registry_path_sharing_the_output_lock() {
+    let h = default_harness();
+    // `--registry <output-dir>/.pack-goz1` resolves to the same lock file the
+    // output guard takes; acquiring both would deadlock this process.
+    let registry = h.output_dir.join(".pack-goz1");
+    let err = run_pack_recipe(&h.recipe_path, Some(&registry), None).unwrap_err();
+    assert!(err.contains("share"), "{err}");
+    assert!(
+        !h.output_dir.join("test-pack-v1.goz1").exists(),
+        "nothing may be written"
+    );
+}
+
+#[test]
+fn rejects_a_registry_path_with_parent_traversal() {
+    let h = default_harness();
+    // A missing directory before `..` can hide a symlink, so the spelled
+    // entry and the filesystem lookup can name different registries.
+    let registry = h.dir.path().join("nested").join("..").join("registry.json");
+    let err = run_pack_recipe(&h.recipe_path, Some(&registry), None).unwrap_err();
+    assert!(err.contains("'..'"), "{err}");
+    assert!(
+        !h.output_dir.join("test-pack-v1.goz1").exists(),
+        "nothing may be written"
+    );
+}
+
+#[test]
+#[cfg(unix)]
+fn refuses_a_registry_symlink_targeting_an_emitted_artifact() {
+    use std::os::unix::fs::symlink;
+
+    let h = default_harness();
+    fs::create_dir_all(&h.output_dir).unwrap();
+    let manifest_out = h.output_dir.join("test-pack-v1.manifest.json");
+    let alias = h.dir.path().join("registry-link.json");
+    // A dangling link: the target does not exist yet, so path.exists() reports
+    // the link itself missing — the collision check must still resolve it.
+    symlink(&manifest_out, &alias).unwrap();
+
+    let err = run_pack_recipe(&h.recipe_path, Some(&alias), None).unwrap_err();
+    assert!(
+        err.contains("overwrite") || err.contains("collide") || err.contains("collides"),
+        "{err}"
+    );
+    assert!(
+        !manifest_out.exists(),
+        "the registry store must never clobber the emitted manifest"
+    );
+}
+
+#[test]
+#[cfg(unix)]
+fn refuses_a_registry_symlink_occupying_an_output_path() {
+    use std::os::unix::fs::symlink;
+
+    let h = default_harness();
+    fs::create_dir_all(&h.output_dir).unwrap();
+    // The spelled registry path IS a planned output: a dangling symlink to a
+    // registry elsewhere. Protecting only the resolved target would let the
+    // atomic pack write replace the link entry itself.
+    let state = h.dir.path().join("state");
+    fs::create_dir_all(&state).unwrap();
+    let link = h.output_dir.join("test-pack-v1.goz1");
+    let target = state.join("registry.json");
+    symlink(&target, &link).unwrap();
+
+    let err = run_pack_recipe(&h.recipe_path, Some(&link), None).unwrap_err();
+    assert!(err.contains("would overwrite"), "{err}");
+    assert!(
+        fs::symlink_metadata(&link)
+            .unwrap()
+            .file_type()
+            .is_symlink(),
+        "the registry symlink must survive untouched"
+    );
+    assert!(!target.exists(), "the registry target must not be created");
+}
+
+#[test]
+#[cfg(unix)]
+fn refuses_a_pack_output_matching_an_intermediate_registry_link() {
+    use std::os::unix::fs::symlink;
+
+    let h = default_harness();
+    fs::create_dir_all(&h.output_dir).unwrap();
+    // registry.json -> <planned .goz1 output> -> state/registry.json: the
+    // middle link is a directory entry neither the spelled path nor the final
+    // target covers, so an atomic write there would replace the link and
+    // leave the registry resolving to artifact bytes.
+    let state = h.dir.path().join("state");
+    fs::create_dir_all(&state).unwrap();
+    let target = state.join("registry.json");
+    let middle = h.output_dir.join("test-pack-v1.goz1");
+    let spelled = h.dir.path().join("registry.json");
+    symlink(&target, &middle).unwrap();
+    symlink(&middle, &spelled).unwrap();
+
+    let err = run_pack_recipe(&h.recipe_path, Some(&spelled), None).unwrap_err();
+    assert!(err.contains("would overwrite"), "{err}");
+    assert!(
+        fs::symlink_metadata(&middle)
+            .unwrap()
+            .file_type()
+            .is_symlink(),
+        "the intermediate registry link must survive untouched"
+    );
+    assert!(!target.exists(), "the registry target must not be created");
+}
+
+#[test]
 fn refuses_to_overwrite_an_input_aliased_by_an_output_path() {
-    let dir = TempDir::new().unwrap();
+    let dir = test_dir();
     let output_dir = dir.path().join("packs");
     fs::create_dir_all(&output_dir).unwrap();
     let aliased_source = output_dir.join("test-pack-v1.manifest.json");
@@ -170,7 +305,7 @@ fn refuses_to_overwrite_an_input_aliased_by_an_output_path() {
 
 #[test]
 fn refuses_to_use_the_registry_path_as_a_generated_output() {
-    let dir = TempDir::new().unwrap();
+    let dir = test_dir();
     let output_dir = dir.path().join("packs");
     let recipe = base_recipe(&output_dir);
     let h = harness_from(dir, &recipe);
@@ -194,7 +329,7 @@ fn a_malformed_registry_fails_before_anything_is_written() {
 
 #[test]
 fn rejects_dissect_manifest_without_ternary_candidates() {
-    let dir = TempDir::new().unwrap();
+    let dir = test_dir();
     let mut dissect: serde_json::Value =
         serde_json::from_str(&fs::read_to_string(FIXTURE_DISSECT).unwrap()).unwrap();
     dissect["ternary_candidates"] = json!([]);
@@ -209,7 +344,7 @@ fn rejects_dissect_manifest_without_ternary_candidates() {
 
 #[test]
 fn rejects_malformed_recipe_json() {
-    let dir = TempDir::new().unwrap();
+    let dir = test_dir();
     let path = dir.path().join("broken.json");
     fs::write(&path, b"{ not json").unwrap();
     let err = load_pack_recipe(&path).unwrap_err();
@@ -229,7 +364,7 @@ fn input_format_defaults_follow_the_source_artifact() {
 
 #[test]
 fn gguf_source_needs_an_explicit_input_format() {
-    let dir = TempDir::new().unwrap();
+    let dir = test_dir();
     let mut source: serde_json::Value =
         serde_json::from_str(&fs::read_to_string(SOURCE_MANIFEST).unwrap()).unwrap();
     source["source_artifact"] = json!({
@@ -257,8 +392,332 @@ fn gguf_source_needs_an_explicit_input_format() {
 }
 
 #[test]
+fn accepts_schema_fields_the_packer_records_without_applying_calibration() {
+    let dir = test_dir();
+    let output_dir = dir.path().join("packs");
+    let registry_path = dir.path().join("declared-registry.json");
+    let mut recipe = base_recipe(&output_dir);
+    let pack_path = output_dir.join("test-pack-v1.goz1");
+    recipe["inputs"]["source_format"] = json!("local_dir");
+    recipe["outputs"]["registry_path"] = json!(registry_path.display().to_string());
+    recipe["outputs"]["goz1_version"] = json!(1);
+    recipe["outputs"]["checksum_algorithm"] = json!("sha256");
+    recipe["outputs"]["artifact_path"] = json!(pack_path.display().to_string());
+    recipe["outputs"]["lineage"] = json!({
+        "parent_manifest_id": "grok-1-future-plan-v1",
+        "recipe_id": "test-ternary-pack",
+        "parent_path": "/models/grok-1"
+    });
+    recipe["calibration"] = json!({
+        "dataset": "reasoning-1m",
+        "sample_count": 8,
+        "seed": 1
+    });
+    recipe["handoff"] = json!({
+        "combine_for_ai": { "enabled": false, "status": "placeholder" },
+        "corinth_canal": { "enabled": false, "status": "placeholder" },
+        "myelin_accelerator": { "enabled": false, "status": "placeholder" }
+    });
+    let recipe_path = write_recipe(dir.path(), "schema-fields.json", &recipe);
+    let outcome = run_pack_recipe(&recipe_path, None, None).unwrap();
+    assert_eq!(outcome.registry_path, registry_path);
+    assert!(outcome.calibration_declared);
+    assert!(outcome.registered);
+    assert!(registry_path.is_file());
+    let manifest = crate::manifest::Manifest::from_file(&outcome.manifest_path).unwrap();
+    assert!(manifest.quantization.unwrap().calibration_dataset.is_none());
+    let report = format_outcome(&outcome);
+    assert!(report.contains("not applied"));
+}
+
+#[test]
+fn rejects_a_source_format_that_disagrees_with_the_manifest() {
+    let dir = test_dir();
+    let mut recipe = base_recipe(&dir.path().join("packs"));
+    recipe["inputs"]["source_format"] = json!("safetensors");
+    let h = harness_from(dir, &recipe);
+    let err = run_pack_recipe(&h.recipe_path, Some(&h.registry_path), None).unwrap_err();
+    assert!(err.contains("source_format"), "{}", err);
+    assert!(!h.output_dir.exists());
+}
+
+#[test]
+fn refuses_to_replace_a_finished_pack_that_shares_the_manifest_id() {
+    let h = default_harness();
+    let slug = "grok_1_future_goz1";
+    let registry = json!({
+        "version": 1,
+        "models": {
+            slug: {
+                "slug": slug,
+                "manifest_id": "test-pack-v1",
+                "family": "grok",
+                "status": "registered",
+                "registered_at": "2026-08-01T00:00:00Z",
+                "generated_status": "success",
+                "producer": "register"
+            }
+        }
+    });
+    fs::write(&h.registry_path, registry.to_string()).unwrap();
+    let err = run_pack_recipe(&h.recipe_path, Some(&h.registry_path), None).unwrap_err();
+    assert!(err.contains("already registered"), "{}", err);
+    assert!(err.contains("Nothing was written"), "{}", err);
+    assert!(!h.output_dir.join("test-pack-v1.goz1").exists());
+    let stored: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&h.registry_path).unwrap()).unwrap();
+    assert_eq!(
+        stored["models"]["grok_1_future_goz1"]["generated_status"],
+        json!("success")
+    );
+}
+
+#[test]
+fn refuses_a_shared_manifest_id_owned_by_another_slug() {
+    let h = default_harness();
+    fs::create_dir_all(&h.output_dir).unwrap();
+    let foreign_manifest = h.output_dir.join("test-pack-v1.manifest.json");
+    fs::write(&foreign_manifest, b"{}\n").unwrap();
+    let registry = json!({
+        "version": 1,
+        "models": {
+            "other_goz1": {
+                "slug": "other_goz1",
+                "manifest_id": "test-pack-v1",
+                "family": "grok",
+                "status": "registered",
+                "registered_at": "2026-08-01T00:00:00Z",
+                "manifest_path": foreign_manifest.display().to_string(),
+                "producer": "pack-goz1",
+                "generated_status": "planned"
+            }
+        }
+    });
+    fs::write(&h.registry_path, registry.to_string()).unwrap();
+    let sentinel = fs::read(&foreign_manifest).unwrap();
+    let err = run_pack_recipe(&h.recipe_path, Some(&h.registry_path), None).unwrap_err();
+    assert!(err.contains("already registered to slug"), "{}", err);
+    assert_eq!(fs::read(&foreign_manifest).unwrap(), sentinel);
+    assert!(!h.output_dir.join("test-pack-v1.goz1").exists());
+}
+
+#[test]
+fn a_predictable_temp_name_does_not_truncate_an_input() {
+    let dir = test_dir();
+    let output_dir = dir.path().join("packs");
+    fs::create_dir_all(&output_dir).unwrap();
+    let decoy = output_dir.join(".test-pack-v1.goz1.tmp");
+    fs::copy(FIXTURE_DISSECT, &decoy).unwrap();
+    let before = fs::read(&decoy).unwrap();
+    let mut recipe = base_recipe(&output_dir);
+    recipe["pack"]["dissect_manifest"] = json!(decoy.display().to_string());
+    let h = harness_from(dir, &recipe);
+    run_pack_recipe(&h.recipe_path, Some(&h.registry_path), None).unwrap();
+    assert_eq!(fs::read(&decoy).unwrap(), before);
+    assert!(h.output_dir.join("test-pack-v1.goz1").is_file());
+}
+
+#[test]
+fn manifest_write_failure_removes_the_written_pack() {
+    let h = default_harness();
+    fs::create_dir_all(&h.output_dir).unwrap();
+    // A directory where the manifest file must land makes the manifest write
+    // fail after the pack bytes have already been written and verified.
+    fs::create_dir(h.output_dir.join("test-pack-v1.manifest.json")).unwrap();
+
+    let err = run_pack_recipe(&h.recipe_path, Some(&h.registry_path), None).unwrap_err();
+    assert!(err.contains("test-pack-v1.manifest.json"), "{}", err);
+    assert!(
+        !h.output_dir.join("test-pack-v1.goz1").exists(),
+        "pack must be removed when the manifest write fails"
+    );
+    assert!(
+        !h.registry_path.exists(),
+        "registry is untouched when the manifest write fails"
+    );
+}
+
+/// Make `dir` read-only and report whether the mode bits actually bind: a
+/// privileged process (root, CAP_DAC_OVERRIDE) writes through 0555, so the
+/// failure-path assertions cannot run there.
+#[cfg(unix)]
+fn make_read_only(dir: &std::path::Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+
+    let mut perms = fs::metadata(dir).unwrap().permissions();
+    perms.set_mode(0o555);
+    fs::set_permissions(dir, perms).unwrap();
+    let probe = dir.join(".write-probe");
+    if fs::write(&probe, b"probe").is_ok() {
+        let _ = fs::remove_file(&probe);
+        restore_dir_mode(dir);
+        false
+    } else {
+        true
+    }
+}
+
+#[cfg(unix)]
+fn restore_dir_mode(dir: &std::path::Path) {
+    use std::os::unix::fs::PermissionsExt;
+
+    let mut perms = fs::metadata(dir).unwrap().permissions();
+    perms.set_mode(0o755);
+    fs::set_permissions(dir, perms).unwrap();
+}
+
+#[test]
+#[cfg(unix)]
+fn persist_failure_restores_the_previous_pack_artifacts() {
+    let h = default_harness();
+    run_pack_recipe(&h.recipe_path, Some(&h.registry_path), None).unwrap();
+    let pack = h.output_dir.join("test-pack-v1.goz1");
+    let manifest = h.output_dir.join("test-pack-v1.manifest.json");
+    let pack_bytes = fs::read(&pack).unwrap();
+    let manifest_bytes = fs::read(&manifest).unwrap();
+    let registry_before = fs::read_to_string(&h.registry_path).unwrap();
+
+    let registry_dir = h.registry_path.parent().unwrap();
+    if !make_read_only(registry_dir) {
+        return;
+    }
+
+    let err = run_pack_recipe(&h.recipe_path, Some(&h.registry_path), None).unwrap_err();
+    assert!(
+        err.contains("Failed to write")
+            || err.contains("Failed to create temporary write")
+            || err.contains("Permission denied"),
+        "{err}"
+    );
+    // Restore write permission so the temp directory cleans up on drop.
+    restore_dir_mode(registry_dir);
+    assert_eq!(
+        fs::read(&pack).unwrap(),
+        pack_bytes,
+        "a failed replay must restore the previously registered pack, not delete it"
+    );
+    assert_eq!(
+        fs::read(&manifest).unwrap(),
+        manifest_bytes,
+        "a failed replay must restore the previously registered manifest, not delete it"
+    );
+    assert_eq!(
+        fs::read_to_string(&h.registry_path).unwrap(),
+        registry_before,
+        "the registry must keep the previous entry"
+    );
+}
+
+#[test]
+#[cfg(unix)]
+fn persist_failure_restores_read_only_outputs_with_their_permissions() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let h = default_harness();
+    run_pack_recipe(&h.recipe_path, Some(&h.registry_path), None).unwrap();
+    let pack = h.output_dir.join("test-pack-v1.goz1");
+    let manifest = h.output_dir.join("test-pack-v1.manifest.json");
+    let pack_bytes = fs::read(&pack).unwrap();
+    let manifest_bytes = fs::read(&manifest).unwrap();
+
+    // Read-only outputs: the forward atomic write replaces them by rename,
+    // and rollback must do the same — a copy-based restore cannot open a
+    // 0444 file for writing even though the directory is writable.
+    for path in [&pack, &manifest] {
+        let mut perms = fs::metadata(path).unwrap().permissions();
+        perms.set_mode(0o444);
+        fs::set_permissions(path, perms).unwrap();
+    }
+    let registry_dir = h.registry_path.parent().unwrap();
+    if !make_read_only(registry_dir) {
+        return;
+    }
+
+    let err = run_pack_recipe(&h.recipe_path, Some(&h.registry_path), None).unwrap_err();
+    assert!(
+        err.contains("Failed to write")
+            || err.contains("Failed to create temporary write")
+            || err.contains("Permission denied"),
+        "{err}"
+    );
+    assert!(
+        !err.contains("rollback was incomplete"),
+        "rollback over read-only outputs must succeed: {err}"
+    );
+
+    // Restore the registry directory's write permission so the temp
+    // directory cleans up on drop; the 0444 files unlink fine.
+    restore_dir_mode(registry_dir);
+
+    assert_eq!(fs::read(&pack).unwrap(), pack_bytes);
+    assert_eq!(fs::read(&manifest).unwrap(), manifest_bytes);
+    assert_eq!(
+        fs::metadata(&pack).unwrap().permissions().mode() & 0o777,
+        0o444,
+        "rollback must restore the original permission bits"
+    );
+}
+
+#[test]
+fn an_unregistered_run_may_reuse_a_slug_when_its_outputs_do_not_collide() {
+    let h = default_harness();
+    let first = run_pack_recipe(&h.recipe_path, Some(&h.registry_path), None).unwrap();
+    assert!(first.registered);
+
+    let mut recipe = base_recipe(&h.dir.path().join("scratch"));
+    recipe["outputs"]["register"] = json!(false);
+    let recipe_path = write_recipe(h.dir.path(), "unregistered.json", &recipe);
+    let outcome = run_pack_recipe(&recipe_path, Some(&h.registry_path), None).unwrap();
+    assert!(!outcome.registered);
+    let scratch_pack = h.dir.path().join("scratch/test-pack-v1.goz1");
+    assert!(
+        scratch_pack.is_file(),
+        "the unregistered pack must still be written"
+    );
+
+    let registry: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&h.registry_path).unwrap()).unwrap();
+    assert_eq!(registry["models"].as_object().unwrap().len(), 1);
+    assert_eq!(
+        fs::read(h.output_dir.join("test-pack-v1.goz1")).unwrap(),
+        fs::read(&scratch_pack).unwrap(),
+        "the registered pack must not be touched"
+    );
+}
+
+#[test]
+fn an_unregistered_run_must_not_overwrite_the_registered_outputs() {
+    let h = default_harness();
+    run_pack_recipe(&h.recipe_path, Some(&h.registry_path), None).unwrap();
+    let registered_pack = h.output_dir.join("test-pack-v1.goz1");
+    let before = fs::read(&registered_pack).unwrap();
+
+    let mut recipe = base_recipe(&h.output_dir);
+    recipe["outputs"]["register"] = json!(false);
+    let recipe_path = write_recipe(h.dir.path(), "unregistered.json", &recipe);
+    let err = run_pack_recipe(&recipe_path, Some(&h.registry_path), None).unwrap_err();
+    assert!(err.contains("collides with registry slug"), "{err}");
+    assert_eq!(fs::read(&registered_pack).unwrap(), before);
+}
+
+#[test]
+fn an_output_dir_override_wins_over_a_declared_artifact_path() {
+    let h = default_harness();
+    let mut recipe = base_recipe(&h.output_dir);
+    recipe["outputs"]["artifact_path"] =
+        json!(h.output_dir.join("test-pack-v1.goz1").display().to_string());
+    let recipe_path = write_recipe(h.dir.path(), "declared.json", &recipe);
+
+    let override_dir = h.dir.path().join("elsewhere");
+    let outcome =
+        run_pack_recipe(&recipe_path, Some(&h.registry_path), Some(&override_dir)).unwrap();
+    assert_eq!(outcome.pack_path, override_dir.join("test-pack-v1.goz1"));
+    assert!(outcome.pack_path.is_file());
+}
+
+#[test]
 fn rejects_a_dissect_manifest_for_a_different_model_family() {
-    let dir = TempDir::new().unwrap();
+    let dir = test_dir();
     let mut recipe = base_recipe(&dir.path().join("packs"));
     recipe["inputs"]["source_manifest"] = json!(REDPAJAMA_MANIFEST);
     let h = harness_from(dir, &recipe);

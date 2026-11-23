@@ -3,6 +3,9 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
+/// Producer recorded on entries written by `magere pack-goz1`.
+pub const PACK_GOZ1_PRODUCER: &str = "pack-goz1";
+
 /// Artifact Registry - tracks all registered models and their manifests
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ArtifactRegistry {
@@ -19,12 +22,41 @@ pub struct RegistryEntry {
     pub registered_at: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub notes: Option<String>,
-    /// Absolute or caller-supplied path of the registered manifest file.
+    /// Absolute path of the registered manifest file.
     ///
     /// Used by `pack-goz1` when `inputs.source_manifest` is a registry slug or
-    /// `manifest_id` rather than a filesystem path.
+    /// `manifest_id` rather than a filesystem path. Relative paths are
+    /// canonicalized at registration so a later lookup does not depend on the
+    /// caller's working directory.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub manifest_path: Option<PathBuf>,
+    /// Command that wrote this entry, when this CLI recorded one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub producer: Option<String>,
+    /// `generated_artifact.status` at registration, when the manifest had one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub generated_status: Option<String>,
+    /// Recipe id recorded when a command wrote the entry.
+    ///
+    /// Replay identity is the manifest id, `producer`, and `generated_status ==
+    /// "planned"`. This field is lineage, not part of that check.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recipe_id: Option<String>,
+}
+
+/// How `admit_pack` says this slug may be written.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PackAdmission {
+    Insert,
+    ReplaceOwnPlanned,
+}
+
+/// Provenance stored with a pack-goz1 registry entry.
+pub struct ProducedRegistration<'a> {
+    pub manifest_path: &'a Path,
+    pub producer: &'a str,
+    pub generated_status: Option<&'a str>,
+    pub recipe_id: Option<&'a str>,
 }
 
 impl ArtifactRegistry {
@@ -42,12 +74,93 @@ impl ArtifactRegistry {
         manifest: &Manifest,
         manifest_path: Option<&Path>,
     ) -> Result<(), String> {
+        self.insert_entry(manifest, manifest_path, None)
+    }
+
+    /// Decide whether a pack may take `slug`, before any pack bytes are written.
+    ///
+    /// A replay replaces the entry only when it was written by `pack-goz1`,
+    /// carries the same manifest id, and is still a planned skeleton.
+    ///
+    /// When `will_register` is false the registry is never written, so slug and
+    /// manifest-id ownership do not apply — the caller still has to clear the
+    /// output-path collision checks, which treat an existing same-slug entry as
+    /// foreign in that case.
+    pub fn admit_pack(
+        &self,
+        slug: &str,
+        manifest_id: &str,
+        will_register: bool,
+    ) -> Result<PackAdmission, String> {
+        if will_register && let Some(owner) = self.conflicting_manifest_owner(manifest_id, slug) {
+            return Err(format!(
+                "outputs.manifest_id '{manifest_id}' is already registered to slug '{}'",
+                owner.slug
+            ));
+        }
+        match self.models.get(slug) {
+            Some(existing) if will_register && own_planned_replay(existing, manifest_id) => {
+                Ok(PackAdmission::ReplaceOwnPlanned)
+            }
+            Some(existing) if will_register => Err(format!(
+                "model slug '{slug}' is already registered (manifest_id '{}', producer: {}). \
+                 The registry key is always `<source model slug>_goz1`; changing \
+                 `outputs.manifest_id` cannot avoid this collision. If the entry is a \
+                 stale planned pack written before pack provenance existed, remove it \
+                 to replay the pack, or remove it and `magere register` the completed \
+                 manifest if you only need the artifact tracked.",
+                existing.manifest_id,
+                existing.producer.as_deref().unwrap_or("unspecified")
+            )),
+            _ => Ok(PackAdmission::Insert),
+        }
+    }
+
+    /// Another slug already owns this manifest id.
+    pub fn conflicting_manifest_owner(
+        &self,
+        manifest_id: &str,
+        slug: &str,
+    ) -> Option<&RegistryEntry> {
+        self.models
+            .values()
+            .find(|entry| entry.manifest_id == manifest_id && entry.slug != slug)
+    }
+
+    /// Insert a pack entry. `ReplaceOwnPlanned` removes the previous slug first.
+    pub fn commit_pack(
+        &mut self,
+        manifest: &Manifest,
+        produced: ProducedRegistration<'_>,
+        admission: PackAdmission,
+    ) -> Result<(), String> {
+        if admission == PackAdmission::ReplaceOwnPlanned {
+            self.models.remove(&manifest.model.slug);
+        }
+        self.insert_entry(manifest, Some(produced.manifest_path), Some(produced))
+    }
+
+    fn insert_entry(
+        &mut self,
+        manifest: &Manifest,
+        manifest_path: Option<&Path>,
+        produced: Option<ProducedRegistration<'_>>,
+    ) -> Result<(), String> {
         manifest.validate()?;
 
         if self.models.contains_key(&manifest.model.slug) {
             return Err(format!(
                 "model slug '{}' is already registered",
                 manifest.model.slug
+            ));
+        }
+
+        if let Some(owner) =
+            self.conflicting_manifest_owner(&manifest.metadata.manifest_id, &manifest.model.slug)
+        {
+            return Err(format!(
+                "manifest id '{}' is already registered to slug '{}'",
+                manifest.metadata.manifest_id, owner.slug
             ));
         }
 
@@ -58,29 +171,66 @@ impl ArtifactRegistry {
             status: "registered".to_string(),
             registered_at: chrono::Utc::now().to_rfc3339(),
             notes: manifest.metadata.description.clone(),
-            manifest_path: manifest_path.map(Path::to_path_buf),
+            manifest_path: stored_manifest_path(manifest_path)?,
+            producer: produced
+                .as_ref()
+                .map(|produced| produced.producer.to_string()),
+            generated_status: produced
+                .as_ref()
+                .and_then(|produced| produced.generated_status.map(str::to_string)),
+            recipe_id: produced
+                .as_ref()
+                .and_then(|produced| produced.recipe_id.map(str::to_string)),
         };
-
         self.models.insert(manifest.model.slug.clone(), entry);
         Ok(())
     }
 
     /// Register a model, replacing an existing slug. Used by recipe apply so
     /// replaying a register recipe is idempotent.
-    pub fn register_or_update(&mut self, manifest: &Manifest) -> Result<bool, String> {
+    ///
+    /// `manifest_path` is the file the manifest was loaded from. When given it is
+    /// canonicalized and stored so slug / manifest-id lookups can reload it; when
+    /// `None`, a previous entry's path is kept only if the manifest id is unchanged.
+    pub fn register_or_update(
+        &mut self,
+        manifest: &Manifest,
+        manifest_path: Option<&Path>,
+    ) -> Result<bool, String> {
         manifest.validate()?;
 
-        let replaced = self.models.contains_key(&manifest.model.slug);
-        let registered_at = self
-            .models
-            .get(&manifest.model.slug)
-            .filter(|entry| entry.manifest_id == manifest.metadata.manifest_id)
+        let previous = self.models.get(&manifest.model.slug).cloned();
+        let replaced = previous.is_some();
+        let same_manifest = previous
+            .as_ref()
+            .is_some_and(|entry| entry.manifest_id == manifest.metadata.manifest_id);
+        let registered_at = previous
+            .as_ref()
+            .filter(|_| same_manifest)
             .map(|entry| entry.registered_at.clone())
             .unwrap_or_else(|| chrono::Utc::now().to_rfc3339());
-        let manifest_path = self
-            .models
-            .get(&manifest.model.slug)
-            .and_then(|entry| entry.manifest_path.clone());
+        let manifest_path = match manifest_path {
+            Some(path) => stored_manifest_path(Some(path))?,
+            None => previous
+                .as_ref()
+                .filter(|_| same_manifest)
+                .and_then(|entry| entry.manifest_path.clone()),
+        };
+        let producer = previous
+            .as_ref()
+            .filter(|_| same_manifest)
+            .and_then(|entry| entry.producer.clone());
+        // The manifest being registered is the source of truth for its own
+        // generated status; carrying the previous entry's status over would let
+        // a stale `planned` mark a finished pack as replayable.
+        let generated_status = manifest
+            .generated_artifact
+            .as_ref()
+            .and_then(|artifact| artifact.status.clone());
+        let recipe_id = previous
+            .as_ref()
+            .filter(|_| same_manifest)
+            .and_then(|entry| entry.recipe_id.clone());
         let entry = RegistryEntry {
             slug: manifest.model.slug.clone(),
             manifest_id: manifest.metadata.manifest_id.clone(),
@@ -89,6 +239,9 @@ impl ArtifactRegistry {
             registered_at,
             notes: manifest.metadata.description.clone(),
             manifest_path,
+            producer,
+            generated_status,
+            recipe_id,
         };
 
         self.models.insert(manifest.model.slug.clone(), entry);
@@ -129,6 +282,45 @@ impl ArtifactRegistry {
     pub fn from_json(json: &str) -> Result<Self, serde_json::Error> {
         serde_json::from_str(json)
     }
+
+    /// Dry-run [`commit_pack`] before pack bytes hit disk: manifest schema and slug ownership.
+    pub fn rehearse_pack_commit(
+        &self,
+        manifest: &Manifest,
+        admission: PackAdmission,
+    ) -> Result<(), String> {
+        manifest
+            .validate()
+            .map_err(|e| format!("emitted manifest is invalid: {e}"))?;
+        match admission {
+            PackAdmission::ReplaceOwnPlanned => Ok(()),
+            PackAdmission::Insert if self.models.contains_key(&manifest.model.slug) => Err(
+                format!("model slug '{}' is already registered", manifest.model.slug),
+            ),
+            PackAdmission::Insert => Ok(()),
+        }
+    }
+}
+
+/// Store an absolute manifest path so later lookups survive a working-directory change.
+pub fn canonical_manifest_path(path: &Path) -> Result<PathBuf, String> {
+    std::fs::canonicalize(path).map_err(|e| {
+        format!(
+            "Failed to canonicalize manifest path '{}': {}",
+            path.display(),
+            e
+        )
+    })
+}
+
+fn own_planned_replay(existing: &RegistryEntry, manifest_id: &str) -> bool {
+    existing.manifest_id == manifest_id
+        && existing.producer.as_deref() == Some(PACK_GOZ1_PRODUCER)
+        && existing.generated_status.as_deref() == Some("planned")
+}
+
+fn stored_manifest_path(path: Option<&Path>) -> Result<Option<PathBuf>, String> {
+    path.map(canonical_manifest_path).transpose()
 }
 
 impl Default for ArtifactRegistry {
@@ -232,9 +424,9 @@ mod tests {
         let mut registry = ArtifactRegistry::new();
         let manifest = create_test_manifest();
 
-        assert!(!registry.register_or_update(&manifest).unwrap());
+        assert!(!registry.register_or_update(&manifest, None).unwrap());
         let first_registered_at = registry.lookup("test_model").unwrap().registered_at.clone();
-        assert!(registry.register_or_update(&manifest).unwrap());
+        assert!(registry.register_or_update(&manifest, None).unwrap());
         assert_eq!(registry.count(), 1);
         assert_eq!(
             registry.lookup("test_model").unwrap().manifest_id,
@@ -245,5 +437,230 @@ mod tests {
             first_registered_at,
             "idempotent replay must preserve registered_at"
         );
+    }
+
+    #[test]
+    fn register_or_update_drops_the_manifest_path_when_the_id_changes() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let manifest_path = dir.path().join("source.json");
+        let mut manifest = create_test_manifest();
+        std::fs::write(
+            &manifest_path,
+            serde_json::to_string_pretty(&manifest).unwrap(),
+        )
+        .unwrap();
+
+        let mut registry = ArtifactRegistry::new();
+        registry
+            .register_at(&manifest, Some(&manifest_path))
+            .unwrap();
+        manifest.metadata.manifest_id = "other-manifest".to_string();
+        assert!(registry.register_or_update(&manifest, None).unwrap());
+        assert!(
+            registry
+                .lookup("test_model")
+                .unwrap()
+                .manifest_path
+                .is_none(),
+            "a new manifest id must not keep the previous file path"
+        );
+    }
+
+    #[test]
+    fn register_or_update_stores_the_given_manifest_path() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let first_path = dir.path().join("first.json");
+        let second_path = dir.path().join("second.json");
+        let manifest = create_test_manifest();
+        for path in [&first_path, &second_path] {
+            std::fs::write(path, serde_json::to_string_pretty(&manifest).unwrap()).unwrap();
+        }
+
+        let mut registry = ArtifactRegistry::new();
+        registry
+            .register_or_update(&manifest, Some(&first_path))
+            .unwrap();
+        let expected = std::fs::canonicalize(&first_path).unwrap();
+        assert_eq!(
+            registry
+                .lookup("test_model")
+                .unwrap()
+                .manifest_path
+                .as_deref(),
+            Some(expected.as_path())
+        );
+
+        registry
+            .register_or_update(&manifest, Some(&second_path))
+            .unwrap();
+        let expected = std::fs::canonicalize(&second_path).unwrap();
+        assert_eq!(
+            registry
+                .lookup("test_model")
+                .unwrap()
+                .manifest_path
+                .as_deref(),
+            Some(expected.as_path()),
+            "a re-registration from a new path must refresh manifest_path"
+        );
+    }
+
+    #[test]
+    fn register_at_rejects_a_manifest_id_owned_by_another_slug() {
+        let mut registry = ArtifactRegistry::new();
+        registry.register_at(&create_test_manifest(), None).unwrap();
+
+        let mut second = create_test_manifest();
+        second.model.slug = "other_model".to_string();
+        let err = registry.register_at(&second, None).unwrap_err();
+        assert!(
+            err.contains("already registered to slug 'test_model'"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn register_at_stores_an_absolute_manifest_path() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let manifest_path = dir.path().join("source.json");
+        let manifest = create_test_manifest();
+        std::fs::write(
+            &manifest_path,
+            serde_json::to_string_pretty(&manifest).unwrap(),
+        )
+        .unwrap();
+
+        let mut registry = ArtifactRegistry::new();
+        registry
+            .register_at(&manifest, Some(&manifest_path))
+            .unwrap();
+        let stored = registry
+            .lookup("test_model")
+            .unwrap()
+            .manifest_path
+            .clone()
+            .unwrap();
+        assert!(stored.is_absolute());
+        assert!(stored.is_file());
+        assert_eq!(stored, std::fs::canonicalize(&manifest_path).unwrap());
+    }
+
+    #[test]
+    fn admit_pack_allows_an_unregistered_run_to_share_a_slug() {
+        let mut registry = ArtifactRegistry::new();
+        let slug = "grok_1_future_goz1";
+        registry.models.insert(
+            slug.to_string(),
+            RegistryEntry {
+                slug: slug.to_string(),
+                manifest_id: "test-pack-v1".to_string(),
+                family: "grok".to_string(),
+                status: "registered".to_string(),
+                registered_at: "2026-08-01T00:00:00Z".to_string(),
+                notes: None,
+                manifest_path: None,
+                producer: Some(PACK_GOZ1_PRODUCER.to_string()),
+                generated_status: Some("planned".to_string()),
+                recipe_id: None,
+            },
+        );
+        assert_eq!(
+            registry.admit_pack(slug, "test-pack-v1", false).unwrap(),
+            PackAdmission::Insert,
+            "an unregistered run never writes the registry, so slug ownership \
+             does not apply — the output-path checks guard the entry's files"
+        );
+        assert_eq!(
+            registry.admit_pack(slug, "test-pack-v1", true).unwrap(),
+            PackAdmission::ReplaceOwnPlanned,
+            "the same entry still replays when the run will register"
+        );
+    }
+
+    #[test]
+    fn register_or_update_takes_generated_status_from_the_manifest() {
+        let mut registry = ArtifactRegistry::new();
+        let slug = "test_model";
+        registry.models.insert(
+            slug.to_string(),
+            RegistryEntry {
+                slug: slug.to_string(),
+                manifest_id: "test-model-v1".to_string(),
+                family: "test".to_string(),
+                status: "registered".to_string(),
+                registered_at: "2026-08-01T00:00:00Z".to_string(),
+                notes: None,
+                manifest_path: None,
+                producer: Some(PACK_GOZ1_PRODUCER.to_string()),
+                generated_status: Some("planned".to_string()),
+                recipe_id: None,
+            },
+        );
+
+        let mut manifest = create_test_manifest();
+        manifest.generated_artifact = Some(crate::manifest::GeneratedArtifact {
+            format: "goz1".to_string(),
+            path: Some("/packs/test.goz1".to_string()),
+            status: Some("success".to_string()),
+            version: Some(1),
+            source_url: None,
+            checksum: None,
+            dtype_summary: None,
+            size_bytes: None,
+            shard_info: None,
+            timestamp: None,
+            source_lineage: None,
+            tensor_summary: None,
+        });
+        registry.register_or_update(&manifest, None).unwrap();
+        let entry = registry.lookup(slug).unwrap();
+        assert_eq!(
+            entry.generated_status.as_deref(),
+            Some("success"),
+            "the registered manifest's own status must replace the stale one"
+        );
+        assert!(
+            registry.admit_pack(slug, "test-model-v1", true).is_err(),
+            "a finished pack must not be replayable as a planned skeleton"
+        );
+    }
+
+    #[test]
+    fn admit_pack_only_replays_own_planned_skeleton_packs() {
+        let mut registry = ArtifactRegistry::new();
+        let manifest_id = "test-pack-v1";
+        let slug = "grok_1_future_goz1";
+        for (generated_status, expect_replay) in [
+            (Some("planned"), true),
+            (Some("success"), false),
+            (None, false),
+        ] {
+            registry.models.clear();
+            registry.models.insert(
+                slug.to_string(),
+                RegistryEntry {
+                    slug: slug.to_string(),
+                    manifest_id: manifest_id.to_string(),
+                    family: "grok".to_string(),
+                    status: "registered".to_string(),
+                    registered_at: "2026-08-01T00:00:00Z".to_string(),
+                    notes: None,
+                    manifest_path: None,
+                    producer: Some(PACK_GOZ1_PRODUCER.to_string()),
+                    generated_status: generated_status.map(str::to_string),
+                    recipe_id: None,
+                },
+            );
+            let admission = registry.admit_pack(slug, manifest_id, true);
+            if expect_replay {
+                assert_eq!(admission.unwrap(), PackAdmission::ReplaceOwnPlanned);
+            } else {
+                assert!(
+                    admission.is_err(),
+                    "status {:?} must not replay",
+                    generated_status
+                );
+            }
+        }
     }
 }

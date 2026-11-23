@@ -4,6 +4,7 @@ use crate::manifest::Manifest;
 use tempfile::TempDir;
 
 #[test]
+#[cfg(unix)]
 fn test_apply_rejects_symlinked_output_base() {
     use std::os::unix::fs::symlink;
 
@@ -42,6 +43,7 @@ fn test_apply_rejects_symlinked_output_base() {
 }
 
 #[test]
+#[cfg(unix)]
 fn test_apply_rejects_symlinked_handoff_destination() {
     use std::os::unix::fs::symlink;
 
@@ -79,6 +81,7 @@ fn test_apply_rejects_symlinked_handoff_destination() {
 }
 
 #[test]
+#[cfg(unix)]
 fn test_apply_rejects_dangling_symlink_at_handoff_destination() {
     use std::os::unix::fs::symlink;
 

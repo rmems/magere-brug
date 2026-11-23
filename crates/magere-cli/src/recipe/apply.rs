@@ -9,7 +9,6 @@ use super::{
 use crate::manifest::{GeneratedArtifact, Manifest};
 use crate::registry::ArtifactRegistry;
 use serde_json::{Value, json};
-use std::io::Write;
 use std::path::{Path, PathBuf};
 
 struct RegisterSource {
@@ -25,10 +24,18 @@ impl Recipe {
     ) -> Result<String, String> {
         let source = self.load_register_source()?;
         let registry_path = self.registry_destination(registry_override);
-        let serialized_registry = prepare_registry_update(&source.manifest, &registry_path)?;
+        // Pin the spelled registry's directory entry before taking the lock:
+        // a symlinked directory must not switch targets while the lock is
+        // held, or emission and the registry store would land in different
+        // releases. The destination then resolves from that pinned entry, so
+        // lock, load, collision checks, and store all name the same file.
+        let registry_entry = crate::registry_io::entry_identity(&registry_path)?;
+        let registry_dest = crate::registry_io::registry_identity(&registry_entry);
+        let _lock = crate::registry_io::RegistryLock::acquire(&registry_dest)?;
+        let registry = prepare_registry_update(&source.manifest, &source.path, &registry_dest)?;
         let (emitted_manifest, emitted_handoff) =
-            self.emit_registered_artifacts(&source, &registry_path)?;
-        write_registry(&serialized_registry, &registry_path)?;
+            self.emit_registered_artifacts(&source, &registry_entry, &registry_dest)?;
+        crate::registry_io::store_registry(&registry, &registry_dest)?;
         Ok(format_register_report(
             self,
             &source.manifest,
@@ -64,9 +71,13 @@ impl Recipe {
     fn emit_registered_artifacts(
         &self,
         source: &RegisterSource,
-        registry_path: &Path,
+        registry_entry: &Path,
+        registry_dest: &Path,
     ) -> Result<(PathBuf, PathBuf), String> {
-        let base = prepare_emit_tree(&emit_base_dir(self, registry_path))?;
+        // The emit base derives from the pinned registry entry: a symlinked
+        // registry still emits beside where the user pointed, not beside the
+        // link's target, and a directory alias cannot move mid-apply.
+        let base = prepare_emit_tree(&emit_base_dir(self, registry_entry))?;
         let manifests_dir = base.join("manifests");
         let handoff_dir = base.join("handoff");
 
@@ -74,7 +85,7 @@ impl Recipe {
         let emitted_manifest = manifests_dir.join(&file_name);
         let emitted_handoff = handoff_dir.join(&file_name);
         reject_registration_path_collisions(
-            registry_path,
+            &[registry_entry, registry_dest],
             &source.path,
             &emitted_manifest,
             &emitted_handoff,
@@ -169,85 +180,22 @@ fn require_registration_requested(recipe: &Recipe) -> Result<(), String> {
     }
 }
 
-fn prepare_registry_update(manifest: &Manifest, registry_path: &Path) -> Result<String, String> {
-    let mut registry = load_registry(registry_path)?;
-    if let Some(owner) = registry.models.values().find(|entry| {
-        entry.manifest_id == manifest.metadata.manifest_id && entry.slug != manifest.model.slug
-    }) {
+fn prepare_registry_update(
+    manifest: &Manifest,
+    manifest_path: &Path,
+    registry_path: &Path,
+) -> Result<ArtifactRegistry, String> {
+    let mut registry = crate::registry_io::load_registry(registry_path)?;
+    if let Some(owner) =
+        registry.conflicting_manifest_owner(&manifest.metadata.manifest_id, &manifest.model.slug)
+    {
         return Err(format!(
             "manifest_id '{}' is already registered to model slug '{}'; cannot assign it to '{}'",
             manifest.metadata.manifest_id, owner.slug, manifest.model.slug
         ));
     }
-    registry.register_or_update(manifest)?;
-    registry
-        .to_json_pretty()
-        .map_err(|e| format!("failed to serialize registry: {e}"))
-}
-
-fn write_registry(serialized: &str, registry_path: &Path) -> Result<(), String> {
-    ensure_parent_dir(registry_path)?;
-    let parent = registry_path
-        .parent()
-        .filter(|parent| !parent.as_os_str().is_empty())
-        .unwrap_or_else(|| Path::new("."));
-    let mut temporary = tempfile::NamedTempFile::new_in(parent).map_err(|e| {
-        format!(
-            "failed to create temporary registry beside {}: {e}",
-            registry_path.display()
-        )
-    })?;
-    temporary.write_all(serialized.as_bytes()).map_err(|e| {
-        format!(
-            "failed to write temporary registry for {}: {e}",
-            registry_path.display()
-        )
-    })?;
-    temporary.flush().map_err(|e| {
-        format!(
-            "failed to flush temporary registry for {}: {e}",
-            registry_path.display()
-        )
-    })?;
-    temporary.as_file().sync_all().map_err(|e| {
-        format!(
-            "failed to sync temporary registry for {}: {e}",
-            registry_path.display()
-        )
-    })?;
-    temporary.persist(registry_path).map_err(|e| {
-        format!(
-            "failed to replace registry {} atomically: {}",
-            registry_path.display(),
-            e.error
-        )
-    })?;
-    Ok(())
-}
-
-fn load_registry(registry_path: &Path) -> Result<ArtifactRegistry, String> {
-    if !registry_path.exists() {
-        return Ok(ArtifactRegistry::new());
-    }
-    let content = std::fs::read_to_string(registry_path)
-        .map_err(|e| format!("failed to read registry {}: {e}", registry_path.display()))?;
-    ArtifactRegistry::from_json(&content)
-        .map_err(|e| format!("failed to parse registry {}: {e}", registry_path.display()))
-}
-
-fn ensure_parent_dir(path: &Path) -> Result<(), String> {
-    let Some(parent) = path.parent() else {
-        return Ok(());
-    };
-    if parent.as_os_str().is_empty() {
-        return Ok(());
-    }
-    std::fs::create_dir_all(parent).map_err(|e| {
-        format!(
-            "failed to create registry directory {}: {e}",
-            parent.display()
-        )
-    })
+    registry.register_or_update(manifest, Some(manifest_path))?;
+    Ok(registry)
 }
 
 fn combine_handoff_payload(recipe: &Recipe, manifest: &Manifest, emitted_manifest: &Path) -> Value {

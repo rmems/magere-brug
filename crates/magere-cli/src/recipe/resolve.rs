@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 
 /// A reference is treated as a filesystem path when it names a JSON file;
 /// anything else is a registry id resolved elsewhere.
-pub(super) fn reference_is_manifest_path(reference: &str) -> bool {
+pub(crate) fn reference_is_manifest_path(reference: &str) -> bool {
     reference.ends_with(".json")
 }
 
@@ -13,7 +13,7 @@ pub(super) fn reference_is_manifest_path(reference: &str) -> bool {
 ///
 /// Checked as a segment rather than a substring so that legitimate names
 /// containing dots (`model..v2.json`) are not rejected.
-pub(super) fn reference_escapes_upward(reference: &str) -> bool {
+pub(crate) fn reference_escapes_upward(reference: &str) -> bool {
     Path::new(reference)
         .components()
         .any(|component| matches!(component, std::path::Component::ParentDir))
@@ -23,7 +23,7 @@ pub(super) fn reference_escapes_upward(reference: &str) -> bool {
 ///
 /// Used before joining a caller-controlled identifier onto an output directory
 /// so `../x` or `/tmp/x` cannot escape that directory.
-pub(super) fn is_filename_safe_id(id: &str) -> bool {
+pub(crate) fn is_filename_safe_id(id: &str) -> bool {
     if id.is_empty() || id.contains('/') || id.contains('\\') {
         return false;
     }
@@ -41,7 +41,7 @@ fn is_repo_root(dir: &Path) -> bool {
     dir.join(".git").exists() || dir.join("Cargo.lock").is_file()
 }
 
-pub(super) fn validate_against_schema(instance: &Value) -> Result<(), String> {
+pub(crate) fn validate_against_schema(instance: &Value) -> Result<(), String> {
     let schema: Value = serde_json::from_str(RECIPE_SCHEMA)
         .map_err(|e| format!("embedded recipe schema is not valid JSON: {e}"))?;
 
@@ -100,7 +100,8 @@ impl Recipe {
         if !reference_is_manifest_path(reference) {
             return Err(format!(
                 "{label} '{reference}' must name a manifest path ending in '.json'; \
-                 registry-id references are not resolvable yet (see issues #19/#8)"
+                 `magere recipe validate` does not resolve registry ids. `magere pack-goz1` \
+                 looks a slug or manifest_id up in the selected registry"
             ));
         }
 
@@ -146,7 +147,7 @@ impl Recipe {
     ///
     /// The search is **bounded before it begins**, so it can never reach outside the
     /// tree the recipe lives in.
-    pub(super) fn resolve_reference(&self, reference: &str) -> Option<PathBuf> {
+    pub(crate) fn resolve_reference(&self, reference: &str) -> Option<PathBuf> {
         let candidate = Path::new(reference);
         if candidate.is_absolute() {
             return None;
@@ -191,6 +192,27 @@ impl Recipe {
 
     fn search_boundary<'a>(&self, dir: &'a Path) -> Option<&'a Path> {
         dir.ancestors().find(|ancestor| is_repo_root(ancestor))
+    }
+
+    /// Whether the recipe lives inside a repository checkout (a `.git` or
+    /// `Cargo.lock` boundary). References that resolve nowhere inside such a
+    /// checkout must not fall back to the process working directory — that
+    /// could silently load a same-named file from a different checkout.
+    pub(crate) fn inside_repository(&self) -> bool {
+        let dir = self
+            .source_path
+            .as_deref()
+            .and_then(Path::parent)
+            // A bare `pack.json` has an empty parent; `resolve_reference`
+            // treats that as the working directory, so check the same dir —
+            // otherwise `pack.json` and `./pack.json` disagree.
+            .filter(|parent| !parent.as_os_str().is_empty())
+            .map(Path::to_path_buf)
+            .or_else(|| std::env::current_dir().ok());
+        let Some(dir) = dir.and_then(|dir| dir.canonicalize().ok()) else {
+            return false;
+        };
+        dir.ancestors().any(is_repo_root)
     }
 }
 

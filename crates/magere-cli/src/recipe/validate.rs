@@ -3,6 +3,7 @@ use super::{
     SUPPORTED_GOZ1_VERSION, VALID_GENERATED_FORMATS, VALID_SOURCE_FORMATS,
 };
 use crate::manifest::Manifest;
+use std::path::{Component, Path};
 
 impl Recipe {
     pub(super) fn validate_semantics(&self) -> Result<(), String> {
@@ -100,7 +101,12 @@ impl Recipe {
                 VALID_SOURCE_FORMATS.join(", ")
             ));
         }
-        self.reject_unpackable_source_format(source_format)?;
+        // `pack.input_format` declares how the packer reads the bytes, so a
+        // declared source_format is then only an assertion about the manifest —
+        // the same escape hatch validate_typed_source_constraints honors.
+        if !self.pack_input_format_declared() {
+            self.reject_unpackable_source_format(source_format)?;
+        }
         self.reject_unexportable_source_format(source_format)
     }
 
@@ -129,7 +135,35 @@ impl Recipe {
         Ok(())
     }
 
-    fn validate_pack_lineage(&self, manifest: &Manifest) -> Result<(), String> {
+    /// Schema gate shared with runners that load a recipe file themselves.
+    pub(crate) fn validate_schema_document(&self) -> Result<(), String> {
+        let Some(instance) = &self.source_json else {
+            return Err("recipe has no source document to validate".to_string());
+        };
+        crate::saaq::reject_explicit_nulls(instance, "")?;
+        super::resolve::validate_against_schema(instance)
+    }
+
+    /// Shared source checks for `pack-goz1` after it has loaded the source manifest.
+    ///
+    /// `resolved_input_dir` is an extra parent path the packer accepts, because
+    /// `pack.input_dir` can name the bytes that were fed in place of
+    /// `source_artifact.path`. `magere recipe validate` does not pass that override.
+    pub(crate) fn check_pack_source(
+        &self,
+        manifest: &Manifest,
+        resolved_input_dir: &str,
+    ) -> Result<(), String> {
+        self.assert_declared_source_format(manifest)?;
+        self.validate_outputs()?;
+        self.validate_pack_lineage_against(manifest, Some(resolved_input_dir))
+    }
+
+    fn validate_pack_lineage_against(
+        &self,
+        manifest: &Manifest,
+        also_parent_path: Option<&str>,
+    ) -> Result<(), String> {
         let Some(lineage) = self
             .outputs
             .as_ref()
@@ -148,12 +182,20 @@ impl Recipe {
         }
         if let Some(parent_path) = lineage.parent_path.as_deref()
             && parent_path != manifest.source_artifact.path
+            && also_parent_path != Some(parent_path)
         {
-            return Err(format!(
-                "outputs.lineage.parent_path '{parent_path}' does not match the referenced \
-                 manifest's source_artifact.path '{}'",
-                manifest.source_artifact.path
-            ));
+            return Err(match also_parent_path {
+                Some(input_dir) => format!(
+                    "outputs.lineage.parent_path '{parent_path}' matches neither the source \
+                     artifact path '{}' nor the resolved pack input_dir '{input_dir}'",
+                    manifest.source_artifact.path
+                ),
+                None => format!(
+                    "outputs.lineage.parent_path '{parent_path}' does not match the referenced \
+                     manifest's source_artifact.path '{}'",
+                    manifest.source_artifact.path
+                ),
+            });
         }
         Ok(())
     }
@@ -166,7 +208,35 @@ impl Recipe {
         self.validate_goz1_version(outputs)?;
         self.validate_checksum_algorithm(outputs)?;
         self.validate_lineage_recipe_id(outputs)?;
+        self.reject_output_parent_components(outputs)?;
         self.validate_register_flags(outputs)
+    }
+
+    /// `magere pack-goz1` refuses `..` in declared output paths because the
+    /// planned-path fold cannot model traversal past a symlink; surface the
+    /// same rejection at validation time instead of only at run time.
+    fn reject_output_parent_components(&self, outputs: &RecipeOutputs) -> Result<(), String> {
+        if !self.recipe_type.is_pack() {
+            return Ok(());
+        }
+        for (label, declared) in [
+            ("outputs.output_dir", outputs.output_dir.as_deref()),
+            ("outputs.artifact_path", outputs.artifact_path.as_deref()),
+        ] {
+            let Some(declared) = declared else {
+                continue;
+            };
+            if Path::new(declared)
+                .components()
+                .any(|component| matches!(component, Component::ParentDir))
+            {
+                return Err(format!(
+                    "{label} '{declared}' must not contain '..' components; spell the output \
+                     path without parent traversal"
+                ));
+            }
+        }
+        Ok(())
     }
 
     fn validate_generated_format(&self, outputs: &RecipeOutputs) -> Result<(), String> {
@@ -313,8 +383,14 @@ impl Recipe {
 
     fn validate_typed_source_constraints(&self, manifest: &Manifest) -> Result<(), String> {
         if self.recipe_type.is_pack() {
-            self.reject_unpackable_source_format(&manifest.source_artifact.format)?;
-            self.validate_pack_lineage(manifest)?;
+            // `pack.input_format` explicitly declares how the packer reads the
+            // input bytes; `pack-goz1` honors it even when the manifest's own
+            // format is not directly packable, so validation must accept what
+            // the runner accepts.
+            if !self.pack_input_format_declared() {
+                self.reject_unpackable_source_format(&manifest.source_artifact.format)?;
+            }
+            self.validate_pack_lineage_against(manifest, None)?;
         }
         if self.recipe_type == RecipeType::GgufExport {
             self.reject_unexportable_source_format(&manifest.source_artifact.format)?;
@@ -323,6 +399,13 @@ impl Recipe {
             self.validate_register_manifest_identity(manifest)?;
         }
         Ok(())
+    }
+
+    fn pack_input_format_declared(&self) -> bool {
+        self.pack
+            .as_ref()
+            .and_then(|pack| pack.get("input_format"))
+            .is_some_and(|value| !value.is_null())
     }
 
     fn validate_register_manifest_identity(&self, manifest: &Manifest) -> Result<(), String> {

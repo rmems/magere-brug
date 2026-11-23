@@ -20,20 +20,24 @@ pub(super) fn resolve_output_layout(
     source: &Manifest,
     output_dir_override: Option<&Path>,
 ) -> Result<OutputLayout, String> {
-    let output_dir: PathBuf = match output_dir_override {
-        Some(dir) => dir.to_path_buf(),
-        None => recipe
-            .outputs
-            .as_ref()
-            .and_then(|o| o.output_dir.as_deref())
-            .map(PathBuf::from)
-            .ok_or_else(|| {
-                format!(
-                    "recipe '{}' has no outputs.output_dir; pass --output-dir",
-                    recipe.recipe_id
-                )
-            })?,
+    let (output_dir, dir_label) = match output_dir_override {
+        Some(dir) => (dir.to_path_buf(), "--output-dir"),
+        None => (
+            recipe
+                .outputs
+                .as_ref()
+                .and_then(|o| o.output_dir.as_deref())
+                .map(PathBuf::from)
+                .ok_or_else(|| {
+                    format!(
+                        "recipe '{}' has no outputs.output_dir; pass --output-dir",
+                        recipe.recipe_id
+                    )
+                })?,
+            "outputs.output_dir",
+        ),
     };
+    reject_parent_dir_components(&output_dir, dir_label)?;
 
     let manifest_id = recipe
         .outputs
@@ -112,8 +116,11 @@ fn resolve_manifest_path_reference(raw: &str, recipe: &Recipe) -> Result<Option<
         ));
     }
     // A relative manifest path may also live relative to the caller's working
-    // directory when the recipe file itself sits outside a repository.
-    if as_manifest_path.exists() {
+    // directory — but only when the recipe sits outside any repository. Inside
+    // a checkout the bounded search above is the whole contract; a cwd
+    // fallback could silently load a same-named file from a different
+    // checkout.
+    if !recipe.inside_repository() && as_manifest_path.exists() {
         return Ok(Some(as_manifest_path.to_path_buf()));
     }
     if looks_like_filesystem_path(raw) {
@@ -267,6 +274,24 @@ fn nearest_existing_ancestor(parent: &Path, file_name: &OsStr) -> (PathBuf, Path
         cursor = cursor.parent().unwrap_or(Path::new(""));
     }
     (cursor.to_path_buf(), suffix)
+}
+
+/// Refuse `..` components in output paths. The lexical fold in
+/// [`resolve_planned`] cannot model the filesystem when `..` follows a
+/// symlink — a missing directory can hide one until it is created — so the
+/// checked destination could differ from where the writer lands.
+pub(super) fn reject_parent_dir_components(path: &Path, label: &str) -> Result<(), String> {
+    if path
+        .components()
+        .any(|component| matches!(component, Component::ParentDir))
+    {
+        return Err(format!(
+            "{label} '{}' must not contain '..' components; spell the output path \
+             without parent traversal",
+            path.display()
+        ));
+    }
+    Ok(())
 }
 
 /// Fold `.`/`..` lexically so a planned path whose missing tail escapes an
@@ -443,6 +468,51 @@ mod tests {
         let _ = fs::remove_file(std::env::current_dir().unwrap().join(&name));
         let (resolved, _) = resolved.expect("cwd-relative manifest must resolve");
         assert!(resolved.ends_with(&name));
+    }
+
+    #[test]
+    fn an_in_repo_recipe_does_not_fall_back_to_cwd() {
+        // The recipe lives inside its own repository boundary, so a manifest
+        // that resolves nowhere inside it must not silently load a same-named
+        // file from the process working directory (a different checkout).
+        let repo = TempDir::new().unwrap();
+        fs::create_dir(repo.path().join(".git")).unwrap();
+        let name = format!("cwd-leak-{}.json", std::process::id());
+        fs::copy(
+            PathBuf::from(SOURCE),
+            std::env::current_dir().unwrap().join(&name),
+        )
+        .unwrap();
+
+        let recipe_body = json!({
+            "recipe_id": "in-repo-pack",
+            "type": "ternary_pack",
+            "inputs": { "source_manifest": name },
+            "outputs": {
+                "generated_format": "goz1",
+                "manifest_id": "test-pack-v1",
+                "output_dir": repo.path().join("packs").display().to_string()
+            },
+            "pack": {
+                "dissect_manifest": DISSECT,
+                "input_format": "safetensors"
+            }
+        });
+        let recipe_path = repo.path().join("pack.json");
+        fs::write(
+            &recipe_path,
+            serde_json::to_string_pretty(&recipe_body).unwrap(),
+        )
+        .unwrap();
+        let recipe = load_pack_recipe(&recipe_path).unwrap();
+        let registry = ArtifactRegistry::new();
+        let resolved = resolve_source_manifest(&recipe, &registry);
+        let _ = fs::remove_file(std::env::current_dir().unwrap().join(&name));
+        let err = resolved.expect_err("an in-repo recipe must not resolve manifests from cwd");
+        assert!(
+            err.contains("file not found") || err.contains("not a readable path"),
+            "{err}"
+        );
     }
 
     #[test]

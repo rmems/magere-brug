@@ -24,11 +24,16 @@ impl Recipe {
     ) -> Result<String, String> {
         let source = self.load_register_source()?;
         let registry_path = self.registry_destination(registry_override);
-        let _lock = crate::registry_io::RegistryLock::acquire(&registry_path)?;
-        let registry = prepare_registry_update(&source.manifest, &source.path, &registry_path)?;
+        // Resolve the registry destination before emitting anything: a
+        // dangling symlink must name its target for the lock, the load, the
+        // collision checks, and the store alike. The spelled path stays for
+        // the report; every filesystem operation uses the destination.
+        let registry_dest = crate::registry_io::registry_identity(&registry_path);
+        let _lock = crate::registry_io::RegistryLock::acquire(&registry_dest)?;
+        let registry = prepare_registry_update(&source.manifest, &source.path, &registry_dest)?;
         let (emitted_manifest, emitted_handoff) =
-            self.emit_registered_artifacts(&source, &registry_path)?;
-        crate::registry_io::store_registry(&registry, &registry_path)?;
+            self.emit_registered_artifacts(&source, &registry_dest)?;
+        crate::registry_io::store_registry(&registry, &registry_dest)?;
         Ok(format_register_report(
             self,
             &source.manifest,

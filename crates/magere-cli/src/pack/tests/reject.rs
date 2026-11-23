@@ -150,6 +150,69 @@ fn rejects_an_unknown_top_level_recipe_key() {
 }
 
 #[test]
+fn rejects_output_dir_with_parent_traversal() {
+    let h = default_harness();
+    let err = run_pack_recipe(
+        &h.recipe_path,
+        Some(&h.registry_path),
+        Some(std::path::Path::new("../escape")),
+    )
+    .unwrap_err();
+    assert!(err.contains("'..'"), "{err}");
+    assert!(!h.output_dir.join("test-pack-v1.goz1").exists());
+}
+
+#[test]
+fn rejects_artifact_path_with_parent_traversal() {
+    let dir = TempDir::new().unwrap();
+    let output_dir = dir.path().join("packs");
+    let mut recipe = base_recipe(&output_dir);
+    recipe["outputs"]["artifact_path"] = json!("../escape.goz1");
+    let h = harness_from(dir, &recipe);
+    let err = run_pack_recipe(&h.recipe_path, Some(&h.registry_path), None).unwrap_err();
+    assert!(err.contains("'..'"), "{err}");
+    assert!(!h.output_dir.join("test-pack-v1.goz1").exists());
+}
+
+#[test]
+fn refuses_a_registry_path_sharing_the_output_lock() {
+    let h = default_harness();
+    // `--registry <output-dir>/.pack-goz1` resolves to the same lock file the
+    // output guard takes; acquiring both would deadlock this process.
+    let registry = h.output_dir.join(".pack-goz1");
+    let err = run_pack_recipe(&h.recipe_path, Some(&registry), None).unwrap_err();
+    assert!(err.contains("share"), "{err}");
+    assert!(
+        !h.output_dir.join("test-pack-v1.goz1").exists(),
+        "nothing may be written"
+    );
+}
+
+#[test]
+#[cfg(unix)]
+fn refuses_a_registry_symlink_targeting_an_emitted_artifact() {
+    use std::os::unix::fs::symlink;
+
+    let h = default_harness();
+    fs::create_dir_all(&h.output_dir).unwrap();
+    let manifest_out = h.output_dir.join("test-pack-v1.manifest.json");
+    let alias = h.dir.path().join("registry-link.json");
+    // A dangling link: the target does not exist yet, so path.exists() reports
+    // the link itself missing — the collision check must still resolve it.
+    symlink(&manifest_out, &alias).unwrap();
+
+    let err = run_pack_recipe(&h.recipe_path, Some(&alias), None).unwrap_err();
+    assert!(
+        err.contains("overwrite") || err.contains("collide") || err.contains("collides"),
+        "{err}"
+    );
+    assert!(
+        !manifest_out.exists(),
+        "the registry store must never clobber the emitted manifest"
+    );
+}
+
+#[test]
 fn refuses_to_overwrite_an_input_aliased_by_an_output_path() {
     let dir = TempDir::new().unwrap();
     let output_dir = dir.path().join("packs");

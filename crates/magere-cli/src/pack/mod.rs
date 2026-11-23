@@ -67,10 +67,18 @@ pub struct PackOutcome {
     pub registered: bool,
 }
 
+/// The registry path as spelled plus the destination it resolves to.
+struct RegistryPaths {
+    /// As spelled by the recipe or CLI — for reporting.
+    report: PathBuf,
+    /// Resolved destination — lock, load, collision checks, store.
+    dest: PathBuf,
+}
+
 /// Inputs gathered before any pack or registry write.
 struct PreparedPack {
     recipe: Recipe,
-    registry_file: PathBuf,
+    registry_paths: RegistryPaths,
     _lock: RegistryLock,
     _output_lock: RegistryLock,
     registry: ArtifactRegistry,
@@ -110,13 +118,13 @@ fn prepare_pack_run(
     registry_path: Option<&Path>,
     output_dir_override: Option<&Path>,
 ) -> Result<PreparedPack, String> {
-    let (recipe, pack_config, registry_file, lock, registry) =
+    let (recipe, pack_config, registry_paths, lock, registry) =
         load_recipe_and_registry(recipe_path, registry_path)?;
     bind_inputs_and_outputs(
         recipe_path,
         recipe,
         pack_config,
-        registry_file,
+        registry_paths,
         lock,
         registry,
         output_dir_override,
@@ -126,7 +134,16 @@ fn prepare_pack_run(
 fn load_recipe_and_registry(
     recipe_path: &Path,
     registry_path: Option<&Path>,
-) -> Result<(Recipe, PackConfig, PathBuf, RegistryLock, ArtifactRegistry), String> {
+) -> Result<
+    (
+        Recipe,
+        PackConfig,
+        RegistryPaths,
+        RegistryLock,
+        ArtifactRegistry,
+    ),
+    String,
+> {
     let recipe = load_pack_recipe(recipe_path)?;
     let pack_config = require_pack_config(&recipe)?;
     let registry_file = registry_path.map(Path::to_path_buf).unwrap_or_else(|| {
@@ -137,16 +154,25 @@ fn load_recipe_and_registry(
             .map(PathBuf::from)
             .unwrap_or_else(|| PathBuf::from("registry.json"))
     });
-    let lock = RegistryLock::acquire(&registry_file)?;
-    let registry = registry_io::load_registry(&registry_file)?;
-    Ok((recipe, pack_config, registry_file, lock, registry))
+    // Resolve the registry destination before any output is written: a
+    // dangling symlink must name its target for the lock, the load, the
+    // collision checks, and the store alike — otherwise the store could
+    // follow the link and overwrite an emitted artifact. The spelled path is
+    // kept for reporting; every filesystem operation uses the destination.
+    let registry_paths = RegistryPaths {
+        dest: crate::registry_io::registry_identity(&registry_file),
+        report: registry_file,
+    };
+    let lock = RegistryLock::acquire(&registry_paths.dest)?;
+    let registry = registry_io::load_registry(&registry_paths.dest)?;
+    Ok((recipe, pack_config, registry_paths, lock, registry))
 }
 
 fn bind_inputs_and_outputs(
     recipe_path: &Path,
     recipe: Recipe,
     pack_config: PackConfig,
-    registry_file: PathBuf,
+    registry_paths: RegistryPaths,
     lock: RegistryLock,
     registry: ArtifactRegistry,
     output_dir_override: Option<&Path>,
@@ -190,17 +216,17 @@ fn bind_inputs_and_outputs(
     create_outputs_if_safe(
         recipe_path,
         &source_path,
-        &registry_file,
+        &registry_paths.dest,
         &layout,
         &dissect_input,
     )?;
     // The registry lock cannot coordinate runs that use different registry
     // files, so the output directory gets its own lock: two packs writing the
     // same destination serialize on it regardless of which registry they pick.
-    let output_lock = RegistryLock::acquire(&layout.output_dir.join(".pack-goz1"))?;
+    let output_lock = acquire_output_lock(&registry_paths.dest, &layout.output_dir)?;
     Ok(PreparedPack {
         recipe,
-        registry_file,
+        registry_paths,
         _lock: lock,
         _output_lock: output_lock,
         registry,
@@ -240,10 +266,28 @@ fn create_outputs_if_safe(
     )
 }
 
+/// Lock `<output-dir>/.pack-goz1` for the duration of the pack run. A registry
+/// path that resolves to the same lock file — e.g. `--registry
+/// <output-dir>/.pack-goz1` — would make this process wait on a lock it
+/// already holds, so it is refused before the second acquire.
+fn acquire_output_lock(registry_file: &Path, output_dir: &Path) -> Result<RegistryLock, String> {
+    let output_lock_base = output_dir.join(".pack-goz1");
+    let output_lock_path = crate::registry_io::registry_lock_path(&output_lock_base);
+    if crate::registry_io::registry_lock_path(registry_file) == output_lock_path {
+        return Err(format!(
+            "registry path '{}' and the pack output lock would share '{}'; \
+             choose a different registry path",
+            registry_file.display(),
+            output_lock_path.display()
+        ));
+    }
+    RegistryLock::acquire(&output_lock_base)
+}
+
 fn execute_pack_run(prepared: PreparedPack) -> Result<PackOutcome, String> {
     let PreparedPack {
         recipe,
-        registry_file,
+        registry_paths,
         _lock,
         _output_lock,
         mut registry,
@@ -291,7 +335,7 @@ fn execute_pack_run(prepared: PreparedPack) -> Result<PackOutcome, String> {
                 &layout,
                 &recipe.recipe_id,
                 admission,
-                &registry_file,
+                &registry_paths.dest,
             )?
         } else {
             false
@@ -316,7 +360,7 @@ fn execute_pack_run(prepared: PreparedPack) -> Result<PackOutcome, String> {
         recipe_id: recipe.recipe_id,
         pack_path: layout.pack_path,
         manifest_path: layout.manifest_path,
-        registry_path: registry_file,
+        registry_path: registry_paths.report,
         sha256,
         size_bytes: stats.size_bytes,
         tensor_count: stats.tensor_count,
@@ -357,6 +401,7 @@ fn check_artifact_path(recipe: &Recipe, layout: &OutputLayout) -> Result<(), Str
     else {
         return Ok(());
     };
+    paths::reject_parent_dir_components(Path::new(artifact_path), "outputs.artifact_path")?;
     let declared = paths::resolve_planned_path(Path::new(artifact_path))?;
     let derived = paths::resolve_planned_path(&layout.pack_path)?;
     if declared != derived {

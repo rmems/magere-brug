@@ -18,8 +18,12 @@ pub struct RegistryLock {
 
 impl RegistryLock {
     pub fn acquire(registry_file: &Path) -> Result<Self, String> {
+        let identity = registry_identity(registry_file);
+        // Both spellings are checked: a raw `*.lock` name is reserved, and an
+        // alias whose target ends in `.lock` would collide just the same.
         reject_lock_named_registry(registry_file)?;
-        let path = lock_path(&registry_identity(registry_file));
+        reject_lock_named_registry(&identity)?;
+        let path = lock_path(&identity);
         ensure_lock_parent(&path)?;
         let file = OpenOptions::new()
             .create(true)
@@ -95,7 +99,11 @@ pub fn store_registry(registry: &ArtifactRegistry, registry_file: &Path) -> Resu
 /// `a/../a` spelling — all converge on one canonical path so they share a
 /// single lock file, and so an atomic write updates the real file instead of
 /// replacing the symlink that pointed at it.
-fn registry_identity(registry_file: &Path) -> PathBuf {
+///
+/// Every caller that locks, loads, collision-checks against, or stores the
+/// registry must use this same destination: a dangling symlink resolves to
+/// its target here even though `Path::exists` reports the link as missing.
+pub(crate) fn registry_identity(registry_file: &Path) -> PathBuf {
     let resolved = follow_final_symlink(registry_file);
     if let Ok(canonical) = std::fs::canonicalize(&resolved) {
         return canonical;
@@ -145,6 +153,13 @@ fn lock_path(registry_file: &Path) -> PathBuf {
     let mut path = registry_file.as_os_str().to_os_string();
     path.push(".lock");
     PathBuf::from(path)
+}
+
+/// The lock file `RegistryLock::acquire` would take for `registry_file`,
+/// resolved through the same identity rules — for callers that must prove two
+/// paths do not share a lock before acquiring either.
+pub(crate) fn registry_lock_path(registry_file: &Path) -> PathBuf {
+    lock_path(&registry_identity(registry_file))
 }
 
 fn ensure_lock_parent(path: &Path) -> Result<(), String> {
@@ -199,6 +214,22 @@ mod tests {
         let err = RegistryLock::acquire(&dir.path().join("registry.lock"))
             .err()
             .expect("a '.lock' registry name must be refused");
+        assert!(err.contains("'.lock'"), "{err}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_symlink_alias_to_a_lock_named_target_is_refused() {
+        use std::os::unix::fs::symlink;
+
+        let dir = tempfile::TempDir::new().unwrap();
+        let target = dir.path().join("models.lock");
+        std::fs::write(&target, b"{}").unwrap();
+        let alias = dir.path().join("legacy.json");
+        symlink(&target, &alias).unwrap();
+        let err = RegistryLock::acquire(&alias)
+            .err()
+            .expect("an alias whose target ends in '.lock' must be refused");
         assert!(err.contains("'.lock'"), "{err}");
     }
 

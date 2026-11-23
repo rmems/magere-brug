@@ -193,6 +193,23 @@ impl Recipe {
     fn search_boundary<'a>(&self, dir: &'a Path) -> Option<&'a Path> {
         dir.ancestors().find(|ancestor| is_repo_root(ancestor))
     }
+
+    /// Whether the recipe lives inside a repository checkout (a `.git` or
+    /// `Cargo.lock` boundary). References that resolve nowhere inside such a
+    /// checkout must not fall back to the process working directory — that
+    /// could silently load a same-named file from a different checkout.
+    pub(crate) fn inside_repository(&self) -> bool {
+        let dir = self
+            .source_path
+            .as_deref()
+            .and_then(Path::parent)
+            .map(Path::to_path_buf)
+            .or_else(|| std::env::current_dir().ok());
+        let Some(dir) = dir.and_then(|dir| dir.canonicalize().ok()) else {
+            return false;
+        };
+        dir.ancestors().any(is_repo_root)
+    }
 }
 
 fn stays_inside_boundary(path: &Path, boundary: Option<&Path>) -> bool {

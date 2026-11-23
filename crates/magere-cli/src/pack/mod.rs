@@ -302,8 +302,14 @@ fn execute_pack_run(prepared: PreparedPack) -> Result<PackOutcome, String> {
     let (stats, registry_replaced) = match committed {
         Ok(pair) => pair,
         Err(err) => {
-            guard.restore();
-            return Err(err);
+            let rollback_failures = guard.restore();
+            return Err(match rollback_failures.is_empty() {
+                true => err,
+                false => format!(
+                    "{err}\n  note: rollback was incomplete: {}",
+                    rollback_failures.join("; ")
+                ),
+            });
         }
     };
     drop(guard);
@@ -554,17 +560,23 @@ impl OutputGuard {
         Ok(Self { entries })
     }
 
-    fn restore(&self) {
+    /// Roll back outputs; returns any restore/removal failures so the caller
+    /// can surface them alongside the original error rather than hide them.
+    fn restore(&self) -> Vec<String> {
+        let mut failures = Vec::new();
         for entry in &self.entries {
-            match &entry.backup {
-                Some(backup) => {
-                    let _ = std::fs::copy(backup.path(), &entry.dest);
-                }
-                None => {
-                    let _ = std::fs::remove_file(&entry.dest);
-                }
+            let result = match &entry.backup {
+                Some(backup) => std::fs::copy(backup.path(), &entry.dest).map(|_| ()),
+                None => match std::fs::remove_file(&entry.dest) {
+                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+                    result => result,
+                },
+            };
+            if let Err(e) = result {
+                failures.push(format!("{}: {}", entry.dest.display(), e));
             }
         }
+        failures
     }
 }
 

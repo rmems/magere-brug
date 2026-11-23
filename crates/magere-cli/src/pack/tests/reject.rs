@@ -493,11 +493,38 @@ fn manifest_write_failure_removes_the_written_pack() {
     );
 }
 
+/// Make `dir` read-only and report whether the mode bits actually bind: a
+/// privileged process (root, CAP_DAC_OVERRIDE) writes through 0555, so the
+/// failure-path assertions cannot run there.
+#[cfg(unix)]
+fn make_read_only(dir: &std::path::Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+
+    let mut perms = fs::metadata(dir).unwrap().permissions();
+    perms.set_mode(0o555);
+    fs::set_permissions(dir, perms).unwrap();
+    let probe = dir.join(".write-probe");
+    if fs::write(&probe, b"probe").is_ok() {
+        let _ = fs::remove_file(&probe);
+        restore_dir_mode(dir);
+        false
+    } else {
+        true
+    }
+}
+
+#[cfg(unix)]
+fn restore_dir_mode(dir: &std::path::Path) {
+    use std::os::unix::fs::PermissionsExt;
+
+    let mut perms = fs::metadata(dir).unwrap().permissions();
+    perms.set_mode(0o755);
+    fs::set_permissions(dir, perms).unwrap();
+}
+
 #[test]
 #[cfg(unix)]
 fn persist_failure_restores_the_previous_pack_artifacts() {
-    use std::os::unix::fs::PermissionsExt;
-
     let h = default_harness();
     run_pack_recipe(&h.recipe_path, Some(&h.registry_path), None).unwrap();
     let pack = h.output_dir.join("test-pack-v1.goz1");
@@ -507,9 +534,9 @@ fn persist_failure_restores_the_previous_pack_artifacts() {
     let registry_before = fs::read_to_string(&h.registry_path).unwrap();
 
     let registry_dir = h.registry_path.parent().unwrap();
-    let mut perms = fs::metadata(registry_dir).unwrap().permissions();
-    perms.set_mode(0o555);
-    fs::set_permissions(registry_dir, perms).unwrap();
+    if !make_read_only(registry_dir) {
+        return;
+    }
 
     let err = run_pack_recipe(&h.recipe_path, Some(&h.registry_path), None).unwrap_err();
     assert!(
@@ -519,9 +546,7 @@ fn persist_failure_restores_the_previous_pack_artifacts() {
         "{err}"
     );
     // Restore write permission so the temp directory cleans up on drop.
-    let mut perms = fs::metadata(registry_dir).unwrap().permissions();
-    perms.set_mode(0o755);
-    fs::set_permissions(registry_dir, perms).unwrap();
+    restore_dir_mode(registry_dir);
     assert_eq!(
         fs::read(&pack).unwrap(),
         pack_bytes,
@@ -537,10 +562,6 @@ fn persist_failure_restores_the_previous_pack_artifacts() {
         registry_before,
         "the registry must keep the previous entry"
     );
-
-    let mut perms = fs::metadata(registry_dir).unwrap().permissions();
-    perms.set_mode(0o755);
-    fs::set_permissions(registry_dir, perms).unwrap();
 }
 
 #[test]
@@ -564,9 +585,9 @@ fn persist_failure_restores_read_only_outputs_with_their_permissions() {
         fs::set_permissions(path, perms).unwrap();
     }
     let registry_dir = h.registry_path.parent().unwrap();
-    let mut perms = fs::metadata(registry_dir).unwrap().permissions();
-    perms.set_mode(0o555);
-    fs::set_permissions(registry_dir, perms).unwrap();
+    if !make_read_only(registry_dir) {
+        return;
+    }
 
     let err = run_pack_recipe(&h.recipe_path, Some(&h.registry_path), None).unwrap_err();
     assert!(
@@ -582,9 +603,7 @@ fn persist_failure_restores_read_only_outputs_with_their_permissions() {
 
     // Restore the registry directory's write permission so the temp
     // directory cleans up on drop; the 0444 files unlink fine.
-    let mut perms = fs::metadata(registry_dir).unwrap().permissions();
-    perms.set_mode(0o755);
-    fs::set_permissions(registry_dir, perms).unwrap();
+    restore_dir_mode(registry_dir);
 
     assert_eq!(fs::read(&pack).unwrap(), pack_bytes);
     assert_eq!(fs::read(&manifest).unwrap(), manifest_bytes);

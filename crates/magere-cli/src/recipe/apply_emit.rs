@@ -14,7 +14,14 @@ pub(super) fn emit_base_dir(recipe: &Recipe, registry_path: &Path) -> PathBuf {
                 if parent.as_os_str().is_empty() {
                     None
                 } else {
-                    Some(parent.to_path_buf())
+                    // Resolve directory aliases so a registry reached through
+                    // a symlinked directory still emits beside it; the
+                    // registry file name itself is never followed here.
+                    Some(
+                        parent
+                            .canonicalize()
+                            .unwrap_or_else(|_| parent.to_path_buf()),
+                    )
                 }
             })
         })

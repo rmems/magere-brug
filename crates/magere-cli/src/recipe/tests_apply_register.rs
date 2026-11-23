@@ -378,3 +378,44 @@ fn test_apply_emit_base_follows_the_spelled_registry_path() {
     );
     assert!(target.is_file(), "the registry is stored through the link");
 }
+
+#[test]
+#[cfg(unix)]
+fn test_apply_emit_base_resolves_symlinked_registry_directories() {
+    use std::os::unix::fs::symlink;
+
+    let (dir, recipe) = recipe_in_temp_dir(
+        r#"{
+          "recipe_id": "register-symlinked-dirs",
+          "type": "register",
+          "inputs": { "source_manifest": "manifest.json" }
+        }"#,
+        &sample_manifest_json("sample-v1", "sample_model", "safetensors"),
+    );
+
+    // `project/current` is a symlinked directory and the registry file inside
+    // it is itself a symlink: the emit base must resolve the directory alias
+    // while still emitting beside the spelled registry.
+    let project = dir.path().join("project");
+    let v2 = project.join("v2");
+    let shared = dir.path().join("shared");
+    std::fs::create_dir_all(&v2).expect("mkdir v2");
+    std::fs::create_dir_all(&shared).expect("mkdir shared");
+    symlink(&v2, project.join("current")).expect("dir symlink");
+    let spelled = project.join("current").join("registry.json");
+    let target = shared.join("registry.json");
+    symlink(&target, &v2.join("registry.json")).expect("file symlink");
+
+    recipe
+        .apply(Some(&spelled))
+        .expect("register recipe applies through aliases");
+
+    assert!(
+        v2.join("manifests").is_dir(),
+        "emitted manifests must land in the resolved registry directory"
+    );
+    assert!(
+        target.is_file(),
+        "the registry is stored at the link target"
+    );
+}

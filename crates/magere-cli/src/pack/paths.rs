@@ -125,6 +125,17 @@ fn resolve_manifest_path_reference(raw: &str, recipe: &Recipe) -> Result<Option<
             raw
         ));
     }
+    resolve_relative_manifest_reference(raw, as_manifest_path, recipe)
+}
+
+/// Handle a relative manifest-path reference that the bounded recipe search
+/// did not resolve: the outside-repository cwd fallback, then the
+/// missing-path vs registry-id decision.
+fn resolve_relative_manifest_reference(
+    raw: &str,
+    as_manifest_path: &Path,
+    recipe: &Recipe,
+) -> Result<Option<PathBuf>, String> {
     // A relative manifest path may also live relative to the caller's working
     // directory — but only when the recipe sits outside any repository. Inside
     // a checkout the bounded search above is the whole contract; a cwd

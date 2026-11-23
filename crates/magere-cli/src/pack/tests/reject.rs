@@ -427,6 +427,10 @@ fn persist_failure_restores_the_previous_pack_artifacts() {
             || err.contains("Permission denied"),
         "{err}"
     );
+    // Restore write permission so the temp directory cleans up on drop.
+    let mut perms = fs::metadata(registry_dir).unwrap().permissions();
+    perms.set_mode(0o755);
+    fs::set_permissions(registry_dir, perms).unwrap();
     assert_eq!(
         fs::read(&pack).unwrap(),
         pack_bytes,

@@ -18,6 +18,7 @@ pub struct RegistryLock {
 
 impl RegistryLock {
     pub fn acquire(registry_file: &Path) -> Result<Self, String> {
+        reject_lock_named_registry(registry_file)?;
         let path = lock_path(&registry_identity(registry_file));
         ensure_lock_parent(&path)?;
         let file = OpenOptions::new()
@@ -37,6 +38,23 @@ impl Drop for RegistryLock {
     fn drop(&mut self) {
         let _ = FileExt::unlock(&self.file);
     }
+}
+
+/// A registry named `*.lock` shares a file with the lock of the registry whose
+/// name drops that suffix — locking one would create it over the other's
+/// registry bytes. Refuse the name outright instead.
+fn reject_lock_named_registry(registry_file: &Path) -> Result<(), String> {
+    if registry_file
+        .file_name()
+        .is_some_and(|name| name.to_string_lossy().ends_with(".lock"))
+    {
+        return Err(format!(
+            "registry path '{}' ends in '.lock' and would collide with the lock \
+             files of other registries; choose a different file name",
+            registry_file.display()
+        ));
+    }
+    Ok(())
 }
 
 /// Load the artifact registry from disk.
@@ -173,6 +191,15 @@ mod tests {
         );
         drop(held);
         acquired_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+    }
+
+    #[test]
+    fn a_registry_named_lock_is_refused() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let err = RegistryLock::acquire(&dir.path().join("registry.lock"))
+            .err()
+            .expect("a '.lock' registry name must be refused");
+        assert!(err.contains("'.lock'"), "{err}");
     }
 
     #[test]

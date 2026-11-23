@@ -120,32 +120,36 @@ pub(crate) fn registry_identity(registry_file: &Path) -> PathBuf {
 /// intermediate link would replace it and leave the registry resolving to
 /// artifact bytes.
 pub(crate) fn symlink_chain_entries(path: &Path) -> Vec<PathBuf> {
-    let mut chain = Vec::new();
-    let mut resolved = path.to_path_buf();
-    for _ in 0..8 {
-        match symlink_target(&resolved) {
-            Some(target) => {
-                chain.push(resolved);
-                resolved = target;
-            }
-            None => break,
-        }
-    }
+    let mut chain = symlink_chain(path);
+    // The last hop is the resolved destination (or the hop-cap give-up),
+    // not a confirmed link; every earlier hop is a symlink entry.
+    chain.pop();
     chain
 }
 
 /// Follow a final-component symlink (and short chains) so a write through an
 /// alias lands on the real file instead of replacing the link.
 fn follow_final_symlink(path: &Path) -> PathBuf {
-    let mut resolved = path.to_path_buf();
-    for _ in 0..8 {
-        match symlink_target(&resolved) {
-            Some(target) => resolved = target,
-            None => return resolved,
-        }
-    }
-    resolved
+    symlink_chain(path)
+        .pop()
+        .unwrap_or_else(|| path.to_path_buf())
 }
+
+/// `path` followed through its final-component symlink chain: `path` itself
+/// first, then each link target, ending at the first non-link — or at the
+/// hop cap, matching how far `follow_final_symlink` is willing to resolve.
+fn symlink_chain(path: &Path) -> Vec<PathBuf> {
+    let mut chain = vec![path.to_path_buf()];
+    while chain.len() <= MAX_SYMLINK_HOPS {
+        let Some(target) = symlink_target(chain.last().expect("chain is never empty")) else {
+            break;
+        };
+        chain.push(target);
+    }
+    chain
+}
+
+const MAX_SYMLINK_HOPS: usize = 8;
 
 fn symlink_target(path: &Path) -> Option<PathBuf> {
     let meta = std::fs::symlink_metadata(path).ok()?;

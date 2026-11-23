@@ -544,6 +544,58 @@ fn persist_failure_restores_the_previous_pack_artifacts() {
 }
 
 #[test]
+#[cfg(unix)]
+fn persist_failure_restores_read_only_outputs_with_their_permissions() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let h = default_harness();
+    run_pack_recipe(&h.recipe_path, Some(&h.registry_path), None).unwrap();
+    let pack = h.output_dir.join("test-pack-v1.goz1");
+    let manifest = h.output_dir.join("test-pack-v1.manifest.json");
+    let pack_bytes = fs::read(&pack).unwrap();
+    let manifest_bytes = fs::read(&manifest).unwrap();
+
+    // Read-only outputs: the forward atomic write replaces them by rename,
+    // and rollback must do the same — a copy-based restore cannot open a
+    // 0444 file for writing even though the directory is writable.
+    for path in [&pack, &manifest] {
+        let mut perms = fs::metadata(path).unwrap().permissions();
+        perms.set_mode(0o444);
+        fs::set_permissions(path, perms).unwrap();
+    }
+    let registry_dir = h.registry_path.parent().unwrap();
+    let mut perms = fs::metadata(registry_dir).unwrap().permissions();
+    perms.set_mode(0o555);
+    fs::set_permissions(registry_dir, perms).unwrap();
+
+    let err = run_pack_recipe(&h.recipe_path, Some(&h.registry_path), None).unwrap_err();
+    assert!(
+        err.contains("Failed to write")
+            || err.contains("Failed to create temporary write")
+            || err.contains("Permission denied"),
+        "{err}"
+    );
+    assert!(
+        !err.contains("rollback was incomplete"),
+        "rollback over read-only outputs must succeed: {err}"
+    );
+
+    // Restore the registry directory's write permission so the temp
+    // directory cleans up on drop; the 0444 files unlink fine.
+    let mut perms = fs::metadata(registry_dir).unwrap().permissions();
+    perms.set_mode(0o755);
+    fs::set_permissions(registry_dir, perms).unwrap();
+
+    assert_eq!(fs::read(&pack).unwrap(), pack_bytes);
+    assert_eq!(fs::read(&manifest).unwrap(), manifest_bytes);
+    assert_eq!(
+        fs::metadata(&pack).unwrap().permissions().mode() & 0o777,
+        0o444,
+        "rollback must restore the original permission bits"
+    );
+}
+
+#[test]
 fn an_unregistered_run_may_reuse_a_slug_when_its_outputs_do_not_collide() {
     let h = default_harness();
     let first = run_pack_recipe(&h.recipe_path, Some(&h.registry_path), None).unwrap();

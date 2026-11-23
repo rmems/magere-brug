@@ -324,7 +324,7 @@ fn execute_pack_run(prepared: PreparedPack) -> Result<PackOutcome, String> {
     // A replay can overwrite files an existing registry entry still names, so
     // snapshot them before the first write: any failure below must restore the
     // previous outputs rather than leave dangling registry references.
-    let guard = OutputGuard::snapshot(&layout)?;
+    let mut guard = OutputGuard::snapshot(&layout)?;
     let committed = (|| -> Result<(io::PackStats, bool), String> {
         write_bytes_atomically(&layout.pack_path, &bytes)?;
         let stats = verify_pack_and_emit_manifest(&layout, &bytes, &emitted)?;
@@ -586,19 +586,23 @@ struct OutputGuard {
 struct GuardedOutput {
     dest: PathBuf,
     backup: Option<tempfile::NamedTempFile>,
+    permissions: Option<std::fs::Permissions>,
 }
 
 impl OutputGuard {
     fn snapshot(layout: &OutputLayout) -> Result<Self, String> {
         let mut entries = Vec::with_capacity(2);
         for dest in [&layout.pack_path, &layout.manifest_path] {
-            let backup = match std::fs::metadata(dest) {
-                Ok(meta) if meta.is_file() => Some(snapshot_file(dest)?),
-                _ => None,
+            let (backup, permissions) = match std::fs::metadata(dest) {
+                Ok(meta) if meta.is_file() => {
+                    (Some(snapshot_file(dest)?), Some(meta.permissions()))
+                }
+                _ => (None, None),
             };
             entries.push(GuardedOutput {
                 dest: dest.clone(),
                 backup,
+                permissions,
             });
         }
         Ok(Self { entries })
@@ -606,14 +610,16 @@ impl OutputGuard {
 
     /// Roll back outputs; returns any restore/removal failures so the caller
     /// can surface them alongside the original error rather than hide them.
-    fn restore(&self) -> Vec<String> {
+    fn restore(&mut self) -> Vec<String> {
         let mut failures = Vec::new();
-        for entry in &self.entries {
-            let result = match &entry.backup {
-                Some(backup) => std::fs::copy(backup.path(), &entry.dest).map(|_| ()),
+        for entry in &mut self.entries {
+            let backup = entry.backup.take();
+            let permissions = entry.permissions.clone();
+            let result = match backup {
+                Some(backup) => restore_snapshot(&entry.dest, permissions.as_ref(), backup),
                 None => match std::fs::remove_file(&entry.dest) {
                     Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
-                    result => result,
+                    result => result.map_err(|e| e.to_string()),
                 },
             };
             if let Err(e) = result {
@@ -621,6 +627,39 @@ impl OutputGuard {
             }
         }
         failures
+    }
+}
+
+/// Replace `dest` with its snapshot atomically — the same rename the forward
+/// writer used, which succeeds even when the published output is read-only —
+/// then restore the original permission bits. If the replace fails the
+/// snapshot file is kept on disk and its path reported.
+fn restore_snapshot(
+    dest: &Path,
+    permissions: Option<&std::fs::Permissions>,
+    backup: tempfile::NamedTempFile,
+) -> Result<(), String> {
+    match backup.persist(dest) {
+        Ok(_) => {
+            if let Some(permissions) = permissions {
+                std::fs::set_permissions(dest, permissions.clone()).map_err(|e| {
+                    format!("restored bytes but could not restore permissions: {e}")
+                })?;
+            }
+            Ok(())
+        }
+        Err(persist_error) => {
+            let retained = persist_error
+                .file
+                .into_temp_path()
+                .keep()
+                .map(|path| path.display().to_string())
+                .unwrap_or_else(|_| "<snapshot could not be retained>".to_string());
+            Err(format!(
+                "atomic restore failed: {}; snapshot retained at {}",
+                persist_error.error, retained
+            ))
+        }
     }
 }
 

@@ -87,7 +87,17 @@ fn resolve_source_ref(
     if let Some(resolved) = resolve_manifest_path_reference(raw, recipe)? {
         return Ok(resolved);
     }
-    resolve_path_or_registry_reference(raw, registry)
+    // A bare `*.json` name may be a registry id; inside a repository the cwd
+    // exists() probe must not reopen the checkout boundary the bounded search
+    // just refused.
+    let skip_fs_probe = recipe.inside_repository() && is_bare_manifest_name(raw);
+    resolve_path_or_registry_reference(raw, registry, skip_fs_probe)
+}
+
+/// A bare `*.json` filename — no directory component — that may name a
+/// registry slug or manifest_id rather than a filesystem path.
+fn is_bare_manifest_name(raw: &str) -> bool {
+    !raw.contains('/') && !raw.contains('\\') && raw.ends_with(".json")
 }
 
 /// Resolve a `*.json`-looking reference against the recipe's search rules.
@@ -123,7 +133,11 @@ fn resolve_manifest_path_reference(raw: &str, recipe: &Recipe) -> Result<Option<
     if !recipe.inside_repository() && as_manifest_path.exists() {
         return Ok(Some(as_manifest_path.to_path_buf()));
     }
-    if looks_like_filesystem_path(raw) {
+    // A bare `*.json` filename may still be a registry id — manifest_ids can
+    // end in `.json` — so only spellings with a directory component are
+    // unambiguously missing filesystem paths; the rest fall through to
+    // registry lookup.
+    if raw.contains('/') || raw.contains('\\') {
         return Err(format!(
             "Failed to load source manifest '{}': file not found",
             raw
@@ -134,12 +148,17 @@ fn resolve_manifest_path_reference(raw: &str, recipe: &Recipe) -> Result<Option<
 
 /// Resolve `raw` as an existing filesystem path, else as a registry slug or
 /// manifest_id carrying a stored `manifest_path`.
+///
+/// `skip_fs_probe` suppresses the cwd-relative `exists()` check for bare
+/// manifest names inside a repository, where the bounded search is the whole
+/// contract.
 fn resolve_path_or_registry_reference(
     raw: &str,
     registry: &ArtifactRegistry,
+    skip_fs_probe: bool,
 ) -> Result<PathBuf, String> {
     let as_path = Path::new(raw);
-    if as_path.exists() {
+    if !skip_fs_probe && as_path.exists() {
         return Ok(as_path.to_path_buf());
     }
     let entry = registry
@@ -169,10 +188,6 @@ fn stored_entry_manifest_path(raw: &str, entry: &RegistryEntry) -> Result<PathBu
             raw
         )),
     }
-}
-
-fn looks_like_filesystem_path(raw: &str) -> bool {
-    raw.contains('/') || raw.contains('\\') || raw.ends_with(".json")
 }
 
 /// One filename component, using the same rule as other recipe output ids.
@@ -556,6 +571,84 @@ mod tests {
                 .unwrap()
                 .join("a.goz1"),
             "`..` escaping the ancestor must still resolve where the writer lands"
+        );
+    }
+
+    fn registry_with_manifest_id(manifest_id: &str) -> ArtifactRegistry {
+        let registry_json = json!({
+            "version": 1,
+            "models": {
+                "baseline_source": {
+                    "slug": "baseline_source",
+                    "manifest_id": manifest_id,
+                    "family": "grok",
+                    "status": "registered",
+                    "registered_at": "2026-08-01T00:00:00Z",
+                    "manifest_path": SOURCE,
+                    "producer": "register"
+                }
+            }
+        });
+        ArtifactRegistry::from_json(&registry_json.to_string()).unwrap()
+    }
+
+    fn pack_recipe_for(dir: &Path, source_manifest: &str) -> Recipe {
+        let recipe_body = json!({
+            "recipe_id": "registry-json-id-pack",
+            "type": "ternary_pack",
+            "inputs": { "source_manifest": source_manifest },
+            "outputs": {
+                "generated_format": "goz1",
+                "manifest_id": "test-pack-v1",
+                "output_dir": dir.join("packs").display().to_string()
+            },
+            "pack": {
+                "dissect_manifest": DISSECT,
+                "input_format": "safetensors"
+            }
+        });
+        let recipe_path = dir.join("pack.json");
+        fs::write(
+            &recipe_path,
+            serde_json::to_string_pretty(&recipe_body).unwrap(),
+        )
+        .unwrap();
+        load_pack_recipe(&recipe_path).unwrap()
+    }
+
+    #[test]
+    fn a_registered_manifest_id_ending_in_json_resolves_via_the_registry() {
+        // manifest_ids may end in `.json`; a bare `*.json` reference that is
+        // not a file must still reach registry lookup.
+        let dir = TempDir::new().unwrap();
+        let recipe = pack_recipe_for(dir.path(), "baseline.json");
+        let registry = registry_with_manifest_id("baseline.json");
+        let (resolved, manifest) = resolve_source_manifest(&recipe, &registry)
+            .expect("a registered manifest_id ending in .json must resolve");
+        assert_eq!(resolved, PathBuf::from(SOURCE));
+        assert_eq!(manifest.metadata.manifest_id, "grok-1-future-plan-v1");
+    }
+
+    #[test]
+    fn an_in_repo_bare_json_reference_still_reaches_the_registry() {
+        // Inside a checkout the cwd exists() probe stays off for bare `*.json`
+        // names — but a registered manifest_id must still resolve, and it must
+        // win over a same-named file in the working directory.
+        let repo = TempDir::new().unwrap();
+        fs::create_dir(repo.path().join(".git")).unwrap();
+        let name = format!("baseline-{}.json", std::process::id());
+        let cwd_file = std::env::current_dir().unwrap().join(&name);
+        fs::copy(PathBuf::from(SOURCE), &cwd_file).unwrap();
+
+        let recipe = pack_recipe_for(repo.path(), &name);
+        let registry = registry_with_manifest_id(&name);
+        let resolved = resolve_source_manifest(&recipe, &registry);
+        let _ = fs::remove_file(&cwd_file);
+        let (resolved, _) = resolved.expect("the registry entry must resolve the bare name");
+        assert_eq!(
+            resolved,
+            PathBuf::from(SOURCE),
+            "the registered manifest_path wins over the cwd file"
         );
     }
 }

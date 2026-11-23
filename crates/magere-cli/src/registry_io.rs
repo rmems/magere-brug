@@ -157,7 +157,22 @@ fn canonicalize_parent(path: &Path) -> Option<PathBuf> {
 /// aliases are frozen at call time, so a directory symlink retargeted while a
 /// lock is held cannot move the entry out from under the resolved registry
 /// destination.
+///
+/// `..` components are refused: once a missing directory sits before one, the
+/// filesystem resolves it from that directory's target — which may be a
+/// symlink the lexical fold cannot see — so the spelled entry and the real
+/// lookup can name different files.
 pub(crate) fn entry_identity(path: &Path) -> Result<PathBuf, String> {
+    if path
+        .components()
+        .any(|component| matches!(component, Component::ParentDir))
+    {
+        return Err(format!(
+            "path '{}' must not contain '..' components; spell the path \
+             without parent traversal",
+            path.display()
+        ));
+    }
     let file_name = path
         .file_name()
         .ok_or_else(|| format!("path '{}' must name a file", path.display()))?;
@@ -307,16 +322,23 @@ mod tests {
     }
 
     #[test]
-    fn entry_identity_tolerates_missing_ancestors_and_folds_dotdot() {
+    fn entry_identity_refuses_parent_dir_components() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let spelled = dir.path().join("missing").join("..").join("registry.json");
+        let err = entry_identity(&spelled).unwrap_err();
+        assert!(err.contains("'..'"), "{err}");
+    }
+
+    #[test]
+    fn entry_identity_tolerates_missing_ancestors() {
         let dir = tempfile::TempDir::new().unwrap();
         let root = dir.path().canonicalize().unwrap();
-        let spelled = root
-            .join("missing")
-            .join("..")
-            .join("planned")
-            .join("registry.json");
+        let spelled = root.join("missing").join("deeper").join("registry.json");
         let entry = entry_identity(&spelled).unwrap();
-        assert_eq!(entry, root.join("planned").join("registry.json"));
+        assert_eq!(
+            entry,
+            root.join("missing").join("deeper").join("registry.json")
+        );
     }
 
     #[cfg(unix)]

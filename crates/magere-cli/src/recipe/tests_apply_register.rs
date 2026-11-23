@@ -76,6 +76,24 @@ fn test_apply_register_writes_registry() {
 }
 
 #[test]
+fn test_apply_rejects_registry_paths_with_parent_dir_components() {
+    let (_dir, recipe) = recipe_in_temp_dir(
+        r#"{
+          "recipe_id": "register-dotdot-registry",
+          "type": "register",
+          "inputs": { "source_manifest": "manifest.json" }
+        }"#,
+        &sample_manifest_json("sample-v1", "sample_model", "safetensors"),
+    );
+
+    // A missing directory before `..` can hide a symlink, so the spelled
+    // entry and the filesystem lookup can name different registries.
+    let bad = _dir.path().join("nested").join("..").join("registry.json");
+    let err = recipe.apply(Some(&bad)).unwrap_err();
+    assert!(err.contains("'..'"), "{err}");
+}
+
+#[test]
 fn test_apply_register_stores_the_source_manifest_path() {
     let (dir, recipe) = recipe_in_temp_dir(
         r#"{

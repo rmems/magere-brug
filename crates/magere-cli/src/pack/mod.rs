@@ -154,6 +154,11 @@ fn load_recipe_and_registry(
             .map(PathBuf::from)
             .unwrap_or_else(|| PathBuf::from("registry.json"))
     });
+    // `..` is refused for the same reason output paths refuse it: the
+    // collision check resolves the spelled entry lexically, and a missing
+    // directory before a `..` can hide a symlink that changes where the
+    // filesystem actually lands.
+    paths::reject_parent_dir_components(&registry_file, "registry path")?;
     // Resolve the registry destination before any output is written: a
     // dangling symlink must name its target for the lock, the load, the
     // collision checks, and the store alike — otherwise the store could

@@ -47,16 +47,25 @@ pub(super) fn test_dir() -> TempDir {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     static COUNTER: AtomicUsize = AtomicUsize::new(0);
-    let prefix = format!(
-        "mb-{}-{}-",
-        std::process::id(),
-        COUNTER.fetch_add(1, Ordering::Relaxed)
-    );
-    tempfile::Builder::new()
-        .prefix(&prefix)
-        .rand_bytes(0)
-        .tempdir()
-        .unwrap()
+    // A crashed run can leave a same-named directory behind when the OS
+    // recycles the pid; bump the counter until creation succeeds.
+    for _ in 0..8 {
+        let prefix = format!(
+            "mb-{}-{}-",
+            std::process::id(),
+            COUNTER.fetch_add(1, Ordering::Relaxed)
+        );
+        match tempfile::Builder::new()
+            .prefix(&prefix)
+            .rand_bytes(0)
+            .tempdir()
+        {
+            Ok(dir) => return dir,
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => panic!("failed to create a test directory: {error}"),
+        }
+    }
+    panic!("could not create a uniquely named test directory");
 }
 
 pub(super) fn write_recipe(dir: &Path, name: &str, recipe: &serde_json::Value) -> PathBuf {

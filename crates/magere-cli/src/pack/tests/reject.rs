@@ -188,6 +188,20 @@ fn refuses_a_registry_path_sharing_the_output_lock() {
 }
 
 #[test]
+fn rejects_a_registry_path_with_parent_traversal() {
+    let h = default_harness();
+    // A missing directory before `..` can hide a symlink, so the spelled
+    // entry and the filesystem lookup can name different registries.
+    let registry = h.dir.path().join("nested").join("..").join("registry.json");
+    let err = run_pack_recipe(&h.recipe_path, Some(&registry), None).unwrap_err();
+    assert!(err.contains("'..'"), "{err}");
+    assert!(
+        !h.output_dir.join("test-pack-v1.goz1").exists(),
+        "nothing may be written"
+    );
+}
+
+#[test]
 #[cfg(unix)]
 fn refuses_a_registry_symlink_targeting_an_emitted_artifact() {
     use std::os::unix::fs::symlink;

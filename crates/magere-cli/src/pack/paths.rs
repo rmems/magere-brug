@@ -187,19 +187,27 @@ fn filename_stem(manifest_id: &str) -> Result<&str, String> {
 }
 
 /// Refuse when a derived output path would overwrite a recipe input or the registry file.
+///
+/// `registry_paths` carries every spelling of the registry destination — the
+/// user-spelled path and its resolved target. Each is protected as the
+/// directory *entry* it names: a symlink sitting at an output path is itself
+/// replaced by the atomic write, so protecting only the link's target would
+/// leave the spelled path holding artifact bytes.
 pub(super) fn reject_aliased_outputs(
     recipe_path: &Path,
     source_manifest_path: &Path,
     dissect_manifest_path: &Path,
-    registry_path: &Path,
+    registry_paths: &[&Path],
     pack_path: &Path,
     manifest_path: &Path,
 ) -> Result<(), String> {
-    let mut protected = Vec::with_capacity(4);
+    let mut protected = Vec::with_capacity(6);
     for input in [recipe_path, source_manifest_path, dissect_manifest_path] {
         protected.push(canonicalize_existing(input, "input")?);
     }
-    protected.push(resolve_planned(registry_path)?);
+    for registry_path in registry_paths {
+        protected.push(resolve_entry(registry_path)?);
+    }
     for output in [pack_path, manifest_path] {
         let resolved = resolve_planned(output)?;
         if let Some(hit) = protected.iter().find(|path| paths_alias(path, &resolved)) {
@@ -226,6 +234,15 @@ fn resolve_planned(path: &Path) -> Result<PathBuf, String> {
     if path.exists() {
         return canonicalize_existing(path, "path");
     }
+    resolve_entry(path)
+}
+
+/// Resolve `path` as the directory entry it names without following a
+/// final-component symlink: the parent side is canonicalized and the file
+/// name stays literal, so a symlink and the file it points at are distinct
+/// entries. `resolve_planned` cannot express this — it canonicalizes existing
+/// paths, which follows the link to its target.
+fn resolve_entry(path: &Path) -> Result<PathBuf, String> {
     let (parent, file_name) = split_planned(path)?;
     resolve_under_parent(parent, file_name).map(|resolved| normalize_lexically(&resolved))
 }

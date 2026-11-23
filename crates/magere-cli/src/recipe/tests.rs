@@ -349,6 +349,32 @@ fn test_pack_recipe_declared_source_format_with_input_format_override() {
 }
 
 #[test]
+fn test_pack_recipe_rejects_parent_traversal_in_declared_outputs() {
+    // `pack-goz1` refuses '..' in output paths; validation must reject the
+    // same recipes instead of passing them until run time.
+    for outputs in [
+        r#""output_dir": "../packs""#,
+        r#""artifact_path": "../escape.goz1""#,
+    ] {
+        let (_dir, recipe) = recipe_in_temp_dir(
+            &format!(
+                r#"{{
+                  "recipe_id": "pack-traversal-output",
+                  "type": "ternary_pack",
+                  "inputs": {{ "source_manifest": "manifest.json" }},
+                  "outputs": {{ "generated_format": "goz1", {outputs} }}
+                }}"#
+            ),
+            &sample_manifest_json("sample-v1", "sample_model", "safetensors"),
+        );
+        let err = recipe
+            .validate()
+            .expect_err("'..' in a declared pack output path must fail validation");
+        assert!(err.contains("'..'"), "{err}");
+    }
+}
+
+#[test]
 fn test_pack_recipe_defaults_to_registering() {
     let recipe = Recipe::from_json(
         r#"{

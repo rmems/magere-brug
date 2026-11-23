@@ -289,3 +289,28 @@ fn symlink_escape_is_rejected() {
         "unexpected error: {err}"
     );
 }
+
+#[test]
+fn inside_repository_treats_a_bare_recipe_name_like_dot_slash() {
+    // `pack.json` has an empty parent while `./pack.json` has `.`; both name
+    // the same file in the working directory, so the repository check must
+    // agree on them — `resolve_reference` already treats the empty parent as
+    // the working directory.
+    let recipe_json = r#"{"recipe_id":"bare-name","type":"register",
+        "inputs":{"source_manifest":"manifest.json"},
+        "outputs":{"manifest_id":"x-v1"}}"#;
+    let mut bare = Recipe::from_json(recipe_json).expect("recipe parses");
+    bare.set_source_path(std::path::Path::new("pack.json"));
+    let mut dotted = Recipe::from_json(recipe_json).expect("recipe parses");
+    dotted.set_source_path(std::path::Path::new("./pack.json"));
+
+    assert_eq!(
+        bare.inside_repository(),
+        dotted.inside_repository(),
+        "bare and ./-prefixed spellings of the same recipe must agree"
+    );
+    assert!(
+        bare.inside_repository(),
+        "the test working directory lives inside this repository"
+    );
+}

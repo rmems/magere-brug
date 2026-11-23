@@ -3,6 +3,7 @@ use super::{
     SUPPORTED_GOZ1_VERSION, VALID_GENERATED_FORMATS, VALID_SOURCE_FORMATS,
 };
 use crate::manifest::Manifest;
+use std::path::{Component, Path};
 
 impl Recipe {
     pub(super) fn validate_semantics(&self) -> Result<(), String> {
@@ -207,7 +208,35 @@ impl Recipe {
         self.validate_goz1_version(outputs)?;
         self.validate_checksum_algorithm(outputs)?;
         self.validate_lineage_recipe_id(outputs)?;
+        self.reject_output_parent_components(outputs)?;
         self.validate_register_flags(outputs)
+    }
+
+    /// `magere pack-goz1` refuses `..` in declared output paths because the
+    /// planned-path fold cannot model traversal past a symlink; surface the
+    /// same rejection at validation time instead of only at run time.
+    fn reject_output_parent_components(&self, outputs: &RecipeOutputs) -> Result<(), String> {
+        if !self.recipe_type.is_pack() {
+            return Ok(());
+        }
+        for (label, declared) in [
+            ("outputs.output_dir", outputs.output_dir.as_deref()),
+            ("outputs.artifact_path", outputs.artifact_path.as_deref()),
+        ] {
+            let Some(declared) = declared else {
+                continue;
+            };
+            if Path::new(declared)
+                .components()
+                .any(|component| matches!(component, Component::ParentDir))
+            {
+                return Err(format!(
+                    "{label} '{declared}' must not contain '..' components; spell the output \
+                     path without parent traversal"
+                ));
+            }
+        }
+        Ok(())
     }
 
     fn validate_generated_format(&self, outputs: &RecipeOutputs) -> Result<(), String> {

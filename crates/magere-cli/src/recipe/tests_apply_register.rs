@@ -339,3 +339,42 @@ fn test_pack_rejects_unpackable_resolved_manifest_format() {
         .expect_err("a pack recipe over a gguf manifest must not validate");
     assert!(err.contains("cannot pack source format 'gguf'"), "{err}");
 }
+
+#[test]
+#[cfg(unix)]
+fn test_apply_emit_base_follows_the_spelled_registry_path() {
+    use std::os::unix::fs::symlink;
+
+    let (dir, recipe) = recipe_in_temp_dir(
+        r#"{
+          "recipe_id": "register-symlinked-registry",
+          "type": "register",
+          "inputs": { "source_manifest": "manifest.json" }
+        }"#,
+        &sample_manifest_json("sample-v1", "sample_model", "safetensors"),
+    );
+
+    // A symlinked registry: emitted artifacts must land beside the spelled
+    // path, not beside the link's target.
+    let spelled_dir = dir.path().join("project").join("artifacts");
+    let target_dir = dir.path().join("shared");
+    std::fs::create_dir_all(&spelled_dir).expect("mkdir spelled dir");
+    std::fs::create_dir_all(&target_dir).expect("mkdir target dir");
+    let spelled = spelled_dir.join("registry.json");
+    let target = target_dir.join("registry.json");
+    symlink(&target, &spelled).expect("registry symlink");
+
+    recipe
+        .apply(Some(&spelled))
+        .expect("register recipe applies");
+
+    assert!(
+        spelled_dir.join("manifests").is_dir(),
+        "emitted manifests must land beside the spelled registry path"
+    );
+    assert!(
+        !target_dir.join("manifests").exists(),
+        "the link target's directory must not receive emitted artifacts"
+    );
+    assert!(target.is_file(), "the registry is stored through the link");
+}

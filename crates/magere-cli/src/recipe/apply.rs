@@ -32,7 +32,7 @@ impl Recipe {
         let _lock = crate::registry_io::RegistryLock::acquire(&registry_dest)?;
         let registry = prepare_registry_update(&source.manifest, &source.path, &registry_dest)?;
         let (emitted_manifest, emitted_handoff) =
-            self.emit_registered_artifacts(&source, &registry_dest)?;
+            self.emit_registered_artifacts(&source, &registry_path, &registry_dest)?;
         crate::registry_io::store_registry(&registry, &registry_dest)?;
         Ok(format_register_report(
             self,
@@ -69,9 +69,13 @@ impl Recipe {
     fn emit_registered_artifacts(
         &self,
         source: &RegisterSource,
-        registry_path: &Path,
+        registry_entry: &Path,
+        registry_dest: &Path,
     ) -> Result<(PathBuf, PathBuf), String> {
-        let base = prepare_emit_tree(&emit_base_dir(self, registry_path))?;
+        // The emit base derives from the spelled registry path: a symlinked
+        // registry still emits beside where the user pointed, not beside the
+        // link's target.
+        let base = prepare_emit_tree(&emit_base_dir(self, registry_entry))?;
         let manifests_dir = base.join("manifests");
         let handoff_dir = base.join("handoff");
 
@@ -79,7 +83,7 @@ impl Recipe {
         let emitted_manifest = manifests_dir.join(&file_name);
         let emitted_handoff = handoff_dir.join(&file_name);
         reject_registration_path_collisions(
-            registry_path,
+            &[registry_entry, registry_dest],
             &source.path,
             &emitted_manifest,
             &emitted_handoff,

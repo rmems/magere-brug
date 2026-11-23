@@ -216,7 +216,7 @@ fn bind_inputs_and_outputs(
     create_outputs_if_safe(
         recipe_path,
         &source_path,
-        &registry_paths.dest,
+        &registry_paths,
         &layout,
         &dissect_input,
     )?;
@@ -245,7 +245,7 @@ fn bind_inputs_and_outputs(
 fn create_outputs_if_safe(
     recipe_path: &Path,
     source_path: &Path,
-    registry_file: &Path,
+    registry_paths: &RegistryPaths,
     layout: &OutputLayout,
     dissect_input: &DissectInput,
 ) -> Result<(), String> {
@@ -260,7 +260,7 @@ fn create_outputs_if_safe(
         recipe_path,
         source_path,
         &dissect_input.path,
-        registry_file,
+        &[&registry_paths.report, &registry_paths.dest],
         &layout.pack_path,
         &layout.manifest_path,
     )

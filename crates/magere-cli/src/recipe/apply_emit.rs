@@ -140,35 +140,70 @@ fn write_regular_file(path: &Path, contents: &[u8]) -> Result<(), String> {
 }
 
 pub(super) fn reject_registration_path_collisions(
-    registry_path: &Path,
+    registry_paths: &[&Path],
     source_manifest: &Path,
     emitted_manifest: &Path,
     emitted_handoff: &Path,
 ) -> Result<(), String> {
-    let paths = [
-        ("registry", registry_path),
+    // Every registry spelling is protected as the directory entry it names:
+    // the spelled path can be a symlink an emitted file would replace, and
+    // the resolved destination is the file the store actually writes.
+    let mut canonical: Vec<(String, PathBuf, PathBuf)> = Vec::new();
+    for registry_path in registry_paths {
+        let resolved = resolve_registration_entry(registry_path, "registry")?;
+        canonical.push((
+            "registry".to_string(),
+            registry_path.to_path_buf(),
+            resolved,
+        ));
+    }
+    for (label, path) in [
         ("source manifest", source_manifest),
         ("emitted manifest", emitted_manifest),
         ("combine-for-AI handoff", emitted_handoff),
-    ];
-    let mut canonical: Vec<(String, PathBuf)> = Vec::new();
-    for (label, path) in paths {
+    ] {
         let resolved = canonicalize_registration_path(path, label)?;
-        for (other_label, other) in &canonical {
-            if *other == resolved {
-                if paths_alias_in_place_emit(label, other_label) {
-                    continue;
-                }
-                return Err(format!(
-                    "registration paths must not alias the same file: {label} '{}' and {other_label} '{}'",
-                    path.display(),
-                    other.display()
-                ));
+        canonical.push((label.to_string(), path.to_path_buf(), resolved));
+    }
+    for (index, (label, path, resolved)) in canonical.iter().enumerate() {
+        for (other_label, other_path, other) in &canonical[..index] {
+            if other != resolved {
+                continue;
             }
+            // Two spellings of the same registry are one file, not a
+            // collision; the in-place emit pair is the only other allowed
+            // alias.
+            if other_label == label || paths_alias_in_place_emit(label, other_label) {
+                continue;
+            }
+            return Err(format!(
+                "registration paths must not alias the same file: {label} '{}' and {other_label} '{}'",
+                path.display(),
+                other_path.display()
+            ));
         }
-        canonical.push((label.to_string(), resolved));
     }
     Ok(())
+}
+
+/// Resolve a registry spelling as the directory entry it names: canonicalize
+/// the parent and keep the file name literal, so a final-component symlink is
+/// protected as an entry rather than only through its target.
+fn resolve_registration_entry(path: &Path, label: &str) -> Result<PathBuf, String> {
+    let file_name = path
+        .file_name()
+        .ok_or_else(|| format!("{label} path '{}' must name a file", path.display()))?;
+    let parent = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    let parent = parent.canonicalize().map_err(|e| {
+        format!(
+            "failed to resolve {label} directory '{}': {e}",
+            parent.display()
+        )
+    })?;
+    Ok(parent.join(file_name))
 }
 
 fn paths_alias_in_place_emit(left: &str, right: &str) -> bool {

@@ -213,6 +213,34 @@ fn refuses_a_registry_symlink_targeting_an_emitted_artifact() {
 }
 
 #[test]
+#[cfg(unix)]
+fn refuses_a_registry_symlink_occupying_an_output_path() {
+    use std::os::unix::fs::symlink;
+
+    let h = default_harness();
+    fs::create_dir_all(&h.output_dir).unwrap();
+    // The spelled registry path IS a planned output: a dangling symlink to a
+    // registry elsewhere. Protecting only the resolved target would let the
+    // atomic pack write replace the link entry itself.
+    let state = h.dir.path().join("state");
+    fs::create_dir_all(&state).unwrap();
+    let link = h.output_dir.join("test-pack-v1.goz1");
+    let target = state.join("registry.json");
+    symlink(&target, &link).unwrap();
+
+    let err = run_pack_recipe(&h.recipe_path, Some(&link), None).unwrap_err();
+    assert!(err.contains("would overwrite"), "{err}");
+    assert!(
+        fs::symlink_metadata(&link)
+            .unwrap()
+            .file_type()
+            .is_symlink(),
+        "the registry symlink must survive untouched"
+    );
+    assert!(!target.exists(), "the registry target must not be created");
+}
+
+#[test]
 fn refuses_to_overwrite_an_input_aliased_by_an_output_path() {
     let dir = TempDir::new().unwrap();
     let output_dir = dir.path().join("packs");

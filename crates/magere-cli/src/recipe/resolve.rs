@@ -203,6 +203,10 @@ impl Recipe {
             .source_path
             .as_deref()
             .and_then(Path::parent)
+            // A bare `pack.json` has an empty parent; `resolve_reference`
+            // treats that as the working directory, so check the same dir —
+            // otherwise `pack.json` and `./pack.json` disagree.
+            .filter(|parent| !parent.as_os_str().is_empty())
             .map(Path::to_path_buf)
             .or_else(|| std::env::current_dir().ok());
         let Some(dir) = dir.and_then(|dir| dir.canonicalize().ok()) else {

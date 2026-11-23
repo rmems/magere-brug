@@ -2,7 +2,7 @@
 name = "magere-grok-process"
 version = "0.1.0"
 edition = "2024"
-license = "GPL-3.0-or-later"
+license = "Apache-2.0 OR MIT"
 description = "Grok-1 quantization engine reimplemented from grok-ozempic logic"
 
 [dependencies]

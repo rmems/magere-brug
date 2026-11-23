@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: Apache-2.0 OR MIT
 //! Three-pass out-of-core quantization pipeline.
 //!
 //! Pass 1: Manifest — scan shards and record metadata only.

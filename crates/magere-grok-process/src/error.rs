@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: Apache-2.0 OR MIT
 //! Error types for the Grok-1 quantization pipeline.
 
 use thiserror::Error;

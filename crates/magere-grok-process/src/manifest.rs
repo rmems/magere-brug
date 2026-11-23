@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: Apache-2.0 OR MIT
 //! Manifest parsing — xai-dissect schema v1.
 
 use crate::error::{GrokProcessError, Result};

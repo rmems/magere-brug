@@ -39,6 +39,9 @@ COPY --from=builder /app/configs/ /app/configs/
 COPY --from=builder /app/manifests/ /app/manifests/
 COPY --from=builder /app/scripts/ /app/scripts/
 
+# License notices for the distributed binaries (Apache-2.0 §4(a))
+COPY LICENSE-APACHE LICENSE-MIT /usr/share/doc/magere-brug/
+
 # Python deps for validate_configs.py
 RUN pip3 install --break-system-packages --no-cache-dir jsonschema
 

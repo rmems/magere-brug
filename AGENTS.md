@@ -13,7 +13,6 @@ In scope:
 - SAAQ recipes and experiment tracking
 - CPU-only SNN pipeline components (`crates/magere-corinth-core`)
 - Calibration config and per-run handoff files
-- Docker packaging and CI for the above
 
 Out of scope:
 - CUDA kernels for neuromorphic inference (live in `myelin-accelerator`)

@@ -379,13 +379,14 @@ impl Recipe {
         std::fs::read_to_string(path).map_err(|e| format!("Failed to read recipe: {e}"))
     }
 
-    /// Effective value of `outputs.register`. A register recipe defaults to `true`
-    /// because registering its source manifest is the whole point of the type;
-    /// every other type defaults to `false`. `inspect` and `apply` must not disagree.
-    fn registers_output(&self, outputs: &RecipeOutputs) -> bool {
+    /// Effective value of `outputs.register`. Register and pack recipes default
+    /// to `true` — registering the artifact is the point of `magere register`
+    /// and `magere pack-goz1` alike — every other type defaults to `false`.
+    /// `inspect`, `apply`, and `pack-goz1` must not disagree.
+    pub(crate) fn registers_output(&self, outputs: &RecipeOutputs) -> bool {
         outputs
             .register
-            .unwrap_or(self.recipe_type == RecipeType::Register)
+            .unwrap_or(self.recipe_type == RecipeType::Register || self.recipe_type.is_pack())
     }
 
     fn runner_owner(&self) -> &'static str {

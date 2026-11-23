@@ -152,6 +152,15 @@ impl ArtifactRegistry {
             ));
         }
 
+        if let Some(owner) =
+            self.conflicting_manifest_owner(&manifest.metadata.manifest_id, &manifest.model.slug)
+        {
+            return Err(format!(
+                "manifest id '{}' is already registered to slug '{}'",
+                manifest.metadata.manifest_id, owner.slug
+            ));
+        }
+
         let entry = RegistryEntry {
             slug: manifest.model.slug.clone(),
             manifest_id: manifest.metadata.manifest_id.clone(),
@@ -490,6 +499,20 @@ mod tests {
                 .as_deref(),
             Some(expected.as_path()),
             "a re-registration from a new path must refresh manifest_path"
+        );
+    }
+
+    #[test]
+    fn register_at_rejects_a_manifest_id_owned_by_another_slug() {
+        let mut registry = ArtifactRegistry::new();
+        registry.register_at(&create_test_manifest(), None).unwrap();
+
+        let mut second = create_test_manifest();
+        second.model.slug = "other_model".to_string();
+        let err = registry.register_at(&second, None).unwrap_err();
+        assert!(
+            err.contains("already registered to slug 'test_model'"),
+            "{err}"
         );
     }
 

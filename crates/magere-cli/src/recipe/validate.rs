@@ -349,7 +349,13 @@ impl Recipe {
 
     fn validate_typed_source_constraints(&self, manifest: &Manifest) -> Result<(), String> {
         if self.recipe_type.is_pack() {
-            self.reject_unpackable_source_format(&manifest.source_artifact.format)?;
+            // `pack.input_format` explicitly declares how the packer reads the
+            // input bytes; `pack-goz1` honors it even when the manifest's own
+            // format is not directly packable, so validation must accept what
+            // the runner accepts.
+            if !self.pack_input_format_declared() {
+                self.reject_unpackable_source_format(&manifest.source_artifact.format)?;
+            }
             self.validate_pack_lineage_against(manifest, None)?;
         }
         if self.recipe_type == RecipeType::GgufExport {
@@ -359,6 +365,13 @@ impl Recipe {
             self.validate_register_manifest_identity(manifest)?;
         }
         Ok(())
+    }
+
+    fn pack_input_format_declared(&self) -> bool {
+        self.pack
+            .as_ref()
+            .and_then(|pack| pack.get("input_format"))
+            .is_some_and(|value| !value.is_null())
     }
 
     fn validate_register_manifest_identity(&self, manifest: &Manifest) -> Result<(), String> {

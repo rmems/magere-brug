@@ -307,6 +307,42 @@ fn test_pack_recipe_rejects_unpackable_source_format() {
 }
 
 #[test]
+fn test_pack_recipe_explicit_input_format_allows_unpackable_manifest_format() {
+    // `pack.input_format` declares how the packer reads the input bytes;
+    // `pack-goz1` honors it even when the manifest's own format is not directly
+    // packable, so validation must accept what the runner runs.
+    let (_dir, recipe) = recipe_in_temp_dir(
+        r#"{
+          "recipe_id": "pack-gguf-source-override",
+          "type": "ternary_pack",
+          "inputs": { "source_manifest": "manifest.json" },
+          "outputs": { "generated_format": "goz1" },
+          "pack": { "input_format": "safetensors" }
+        }"#,
+        &sample_manifest_json("sample-v1", "sample_model", "gguf"),
+    );
+    recipe
+        .validate_semantics()
+        .expect("explicit pack.input_format permits a non-packable manifest format");
+}
+
+#[test]
+fn test_pack_recipe_defaults_to_registering() {
+    let recipe = Recipe::from_json(
+        r#"{
+          "recipe_id": "pack-default-register",
+          "type": "goz1_pack",
+          "outputs": { "generated_format": "goz1" }
+        }"#,
+    )
+    .expect("parses");
+    assert!(
+        recipe.registers_output(recipe.outputs.as_ref().unwrap()),
+        "pack-goz1 registers by default, so inspect must report the same"
+    );
+}
+
+#[test]
 fn test_register_recipe_accepts_gguf_source_format() {
     let (_dir, recipe) = recipe_in_temp_dir(
         r#"{

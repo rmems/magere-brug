@@ -163,8 +163,7 @@ fn bind_inputs_and_outputs(
     let will_register = recipe
         .outputs
         .as_ref()
-        .and_then(|outputs| outputs.register)
-        .unwrap_or(true);
+        .is_none_or(|outputs| recipe.registers_output(outputs));
     let slug = format!("{}_goz1", source.model.slug);
     let admission = admit_registry_write(
         &registry,

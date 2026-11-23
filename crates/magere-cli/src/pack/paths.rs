@@ -4,7 +4,7 @@ use crate::manifest::Manifest;
 use crate::recipe::{Recipe, is_filename_safe_id};
 use crate::registry::{ArtifactRegistry, RegistryEntry};
 use std::ffi::OsStr;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 /// Derived pack and manifest destinations for one run.
 #[derive(Debug, Clone)]
@@ -220,7 +220,7 @@ fn resolve_planned(path: &Path) -> Result<PathBuf, String> {
         return canonicalize_existing(path, "path");
     }
     let (parent, file_name) = split_planned(path)?;
-    resolve_under_parent(parent, file_name)
+    resolve_under_parent(parent, file_name).map(|resolved| normalize_lexically(&resolved))
 }
 
 fn split_planned(path: &Path) -> Result<(&Path, &OsStr), String> {
@@ -252,17 +252,40 @@ fn current_dir() -> Result<PathBuf, String> {
 }
 
 /// Walk `parent` up to the nearest existing ancestor, accumulating the missing
-/// tail into `suffix`. An empty `ancestor` means no component exists.
+/// tail into `suffix`. An empty `ancestor` means no component exists. Missing
+/// `..` components are kept in `suffix` — `file_name` drops them, but they
+/// still matter once the missing directories exist.
 fn nearest_existing_ancestor(parent: &Path, file_name: &OsStr) -> (PathBuf, PathBuf) {
     let mut suffix = PathBuf::from(file_name);
     let mut cursor = parent;
     while !cursor.as_os_str().is_empty() && !cursor.exists() {
-        if let Some(name) = cursor.file_name() {
-            suffix = PathBuf::from(name).join(suffix);
+        match cursor.file_name() {
+            Some(name) => suffix = PathBuf::from(name).join(&suffix),
+            None if cursor.ends_with("..") => suffix = PathBuf::from("..").join(&suffix),
+            None => {}
         }
         cursor = cursor.parent().unwrap_or(Path::new(""));
     }
     (cursor.to_path_buf(), suffix)
+}
+
+/// Fold `.`/`..` lexically so a planned path whose missing tail escapes an
+/// ancestor (`packs/missing/../pack.goz1`) compares equal to the path the
+/// writer will actually create. `..` that climbs past the root is dropped, as
+/// the filesystem would; `..` under a relative root is preserved.
+fn normalize_lexically(path: &Path) -> PathBuf {
+    let mut normalized = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir if normalized.file_name().is_some() => {
+                normalized.pop();
+            }
+            Component::ParentDir if !normalized.has_root() => normalized.push(".."),
+            other => normalized.push(other.as_os_str()),
+        }
+    }
+    normalized
 }
 
 fn paths_alias(left: &Path, right: &Path) -> bool {
@@ -427,13 +450,25 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let base = dir.path().join("pack-root");
         fs::create_dir_all(&base).unwrap();
-        let a = base.join("new/out/a.goz1");
-        let b = base.join("./new/out/a.goz1");
-        let ra = resolve_planned_path(&a).unwrap();
-        let rb = resolve_planned_path(&b).unwrap();
+        // `new` never exists, so its `..` can only fold lexically after the
+        // ancestor walk — the spellings agree only if `..` survives the walk
+        // and normalizes onto the path the writer creates.
+        let expected = std::fs::canonicalize(&base).unwrap().join("out/a.goz1");
         assert_eq!(
-            ra, rb,
-            "alias detection must canonicalize through the nearest existing parent"
+            resolve_planned_path(&base.join("out/a.goz1")).unwrap(),
+            expected
+        );
+        assert_eq!(
+            resolve_planned_path(&base.join("new/../out/a.goz1")).unwrap(),
+            expected,
+            "a `..` over a missing component must resolve to the same canonical path"
+        );
+        assert_eq!(
+            resolve_planned_path(&base.join("new/../../a.goz1")).unwrap(),
+            std::fs::canonicalize(base.parent().unwrap())
+                .unwrap()
+                .join("a.goz1"),
+            "`..` escaping the ancestor must still resolve where the writer lands"
         );
     }
 }

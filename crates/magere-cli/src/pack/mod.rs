@@ -72,6 +72,7 @@ struct PreparedPack {
     recipe: Recipe,
     registry_file: PathBuf,
     _lock: RegistryLock,
+    _output_lock: RegistryLock,
     registry: ArtifactRegistry,
     source: Manifest,
     layout: OutputLayout,
@@ -173,9 +174,19 @@ fn bind_inputs_and_outputs(
         &layout.manifest_path,
         will_register,
     )?;
-    paths::reject_output_aliases(&registry, &slug, &layout.pack_path, &layout.manifest_path)?;
+    paths::reject_output_aliases(
+        &registry,
+        &slug,
+        &layout.pack_path,
+        &layout.manifest_path,
+        will_register,
+    )?;
     recipe.check_pack_source(&source, &input_dir)?;
-    check_artifact_path(&recipe, &layout)?;
+    // outputs.artifact_path asserts the recipe's own derived destination; an
+    // explicit --output-dir makes that assertion meaningless for this run.
+    if output_dir_override.is_none() {
+        check_artifact_path(&recipe, &layout)?;
+    }
     let calibration_declared = recipe.calibration.is_some();
     create_outputs_if_safe(
         recipe_path,
@@ -184,10 +195,15 @@ fn bind_inputs_and_outputs(
         &layout,
         &dissect_input,
     )?;
+    // The registry lock cannot coordinate runs that use different registry
+    // files, so the output directory gets its own lock: two packs writing the
+    // same destination serialize on it regardless of which registry they pick.
+    let output_lock = RegistryLock::acquire(&layout.output_dir.join(".pack-goz1"))?;
     Ok(PreparedPack {
         recipe,
         registry_file,
         _lock: lock,
+        _output_lock: output_lock,
         registry,
         source,
         layout,
@@ -230,6 +246,7 @@ fn execute_pack_run(prepared: PreparedPack) -> Result<PackOutcome, String> {
         recipe,
         registry_file,
         _lock,
+        _output_lock,
         mut registry,
         source,
         layout,
@@ -261,32 +278,35 @@ fn execute_pack_run(prepared: PreparedPack) -> Result<PackOutcome, String> {
     if will_register {
         registry.rehearse_pack_commit(&emitted, admission)?;
     }
-    write_bytes_atomically(&layout.pack_path, &bytes)?;
-    let stats = match verify_pack_and_emit_manifest(&layout, &bytes, &emitted) {
-        Ok(stats) => stats,
+    // A replay can overwrite files an existing registry entry still names, so
+    // snapshot them before the first write: any failure below must restore the
+    // previous outputs rather than leave dangling registry references.
+    let guard = OutputGuard::snapshot(&layout)?;
+    let committed = (|| -> Result<(io::PackStats, bool), String> {
+        write_bytes_atomically(&layout.pack_path, &bytes)?;
+        let stats = verify_pack_and_emit_manifest(&layout, &bytes, &emitted)?;
+        let registry_replaced = if will_register {
+            register_and_persist(
+                &mut registry,
+                &emitted,
+                &layout,
+                &recipe.recipe_id,
+                admission,
+                &registry_file,
+            )?
+        } else {
+            false
+        };
+        Ok((stats, registry_replaced))
+    })();
+    let (stats, registry_replaced) = match committed {
+        Ok(pair) => pair,
         Err(err) => {
-            remove_written_outputs(&layout);
+            guard.restore();
             return Err(err);
         }
     };
-    let registry_replaced = if will_register {
-        match register_and_persist(
-            &mut registry,
-            &emitted,
-            &layout,
-            &recipe.recipe_id,
-            admission,
-            &registry_file,
-        ) {
-            Ok(replaced) => replaced,
-            Err(err) => {
-                remove_written_outputs(&layout);
-                return Err(err);
-            }
-        }
-    } else {
-        false
-    };
+    drop(guard);
     Ok(PackOutcome {
         recipe_id: recipe.recipe_id,
         pack_path: layout.pack_path,
@@ -433,7 +453,7 @@ fn reject_model_mismatch(
 }
 
 /// Verify the pack on disk, then write the emitted manifest. A failure here
-/// leaves partial outputs that the caller removes.
+/// leaves partial outputs that the caller's output guard rolls back.
 fn verify_pack_and_emit_manifest(
     layout: &OutputLayout,
     bytes: &[u8],
@@ -496,17 +516,85 @@ fn register_emitted(
         )
         .map_err(|e| {
             format!(
-                "{}\n  note: the pack and manifest were removed because registry registration \
-                 failed. The registry key is the generated slug '{}' (always \
+                "{}\n  note: registry registration failed, so this run was rolled back: \
+                 outputs written by it were removed and any pre-existing outputs were \
+                 restored. The registry key is the generated slug '{}' (always \
                  `<source model slug>_goz1`).",
                 e, emitted.model.slug
             )
         })
 }
 
-fn remove_written_outputs(layout: &OutputLayout) {
-    let _ = std::fs::remove_file(&layout.pack_path);
-    let _ = std::fs::remove_file(&layout.manifest_path);
+/// Snapshots of output files that existed before this run. On failure,
+/// [`OutputGuard::restore`] puts the previous bytes back so an existing
+/// registry entry is never left pointing at deleted or half-written artifacts;
+/// on success the temporary snapshots delete themselves.
+struct OutputGuard {
+    entries: Vec<GuardedOutput>,
+}
+
+struct GuardedOutput {
+    dest: PathBuf,
+    backup: Option<tempfile::NamedTempFile>,
+}
+
+impl OutputGuard {
+    fn snapshot(layout: &OutputLayout) -> Result<Self, String> {
+        let mut entries = Vec::with_capacity(2);
+        for dest in [&layout.pack_path, &layout.manifest_path] {
+            let backup = match std::fs::metadata(dest) {
+                Ok(meta) if meta.is_file() => Some(snapshot_file(dest)?),
+                _ => None,
+            };
+            entries.push(GuardedOutput {
+                dest: dest.clone(),
+                backup,
+            });
+        }
+        Ok(Self { entries })
+    }
+
+    fn restore(&self) {
+        for entry in &self.entries {
+            match &entry.backup {
+                Some(backup) => {
+                    let _ = std::fs::copy(backup.path(), &entry.dest);
+                }
+                None => {
+                    let _ = std::fs::remove_file(&entry.dest);
+                }
+            }
+        }
+    }
+}
+
+fn snapshot_file(dest: &Path) -> Result<tempfile::NamedTempFile, String> {
+    let parent = dest
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    let mut backup = tempfile::NamedTempFile::new_in(parent).map_err(|e| {
+        format!(
+            "Failed to snapshot existing output '{}': {}",
+            dest.display(),
+            e
+        )
+    })?;
+    let mut source = std::fs::File::open(dest).map_err(|e| {
+        format!(
+            "Failed to snapshot existing output '{}': {}",
+            dest.display(),
+            e
+        )
+    })?;
+    std::io::copy(&mut source, backup.as_file_mut()).map_err(|e| {
+        format!(
+            "Failed to snapshot existing output '{}': {}",
+            dest.display(),
+            e
+        )
+    })?;
+    Ok(backup)
 }
 
 fn persist_registry(registry: &ArtifactRegistry, registry_file: &Path) -> Result<(), String> {

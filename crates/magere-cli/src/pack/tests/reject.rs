@@ -404,15 +404,16 @@ fn manifest_write_failure_removes_the_written_pack() {
 
 #[test]
 #[cfg(unix)]
-fn persist_failure_removes_written_pack_artifacts() {
+fn persist_failure_restores_the_previous_pack_artifacts() {
     use std::os::unix::fs::PermissionsExt;
 
     let h = default_harness();
     run_pack_recipe(&h.recipe_path, Some(&h.registry_path), None).unwrap();
     let pack = h.output_dir.join("test-pack-v1.goz1");
     let manifest = h.output_dir.join("test-pack-v1.manifest.json");
-    assert!(pack.is_file());
-    assert!(manifest.is_file());
+    let pack_bytes = fs::read(&pack).unwrap();
+    let manifest_bytes = fs::read(&manifest).unwrap();
+    let registry_before = fs::read_to_string(&h.registry_path).unwrap();
 
     let registry_dir = h.registry_path.parent().unwrap();
     let mut perms = fs::metadata(registry_dir).unwrap().permissions();
@@ -421,17 +422,87 @@ fn persist_failure_removes_written_pack_artifacts() {
 
     let err = run_pack_recipe(&h.recipe_path, Some(&h.registry_path), None).unwrap_err();
     assert!(
-        err.contains("Failed to write") || err.contains("Permission denied"),
+        err.contains("Failed to write")
+            || err.contains("Failed to create temporary write")
+            || err.contains("Permission denied"),
         "{err}"
     );
-    assert!(
-        !pack.exists(),
-        "pack must be removed when registration cannot finish"
+    assert_eq!(
+        fs::read(&pack).unwrap(),
+        pack_bytes,
+        "a failed replay must restore the previously registered pack, not delete it"
     );
-    assert!(
-        !manifest.exists(),
-        "manifest must be removed when registration cannot finish"
+    assert_eq!(
+        fs::read(&manifest).unwrap(),
+        manifest_bytes,
+        "a failed replay must restore the previously registered manifest, not delete it"
     );
+    assert_eq!(
+        fs::read_to_string(&h.registry_path).unwrap(),
+        registry_before,
+        "the registry must keep the previous entry"
+    );
+
+    let mut perms = fs::metadata(registry_dir).unwrap().permissions();
+    perms.set_mode(0o755);
+    fs::set_permissions(registry_dir, perms).unwrap();
+}
+
+#[test]
+fn an_unregistered_run_may_reuse_a_slug_when_its_outputs_do_not_collide() {
+    let h = default_harness();
+    let first = run_pack_recipe(&h.recipe_path, Some(&h.registry_path), None).unwrap();
+    assert!(first.registered);
+
+    let mut recipe = base_recipe(&h.dir.path().join("scratch"));
+    recipe["outputs"]["register"] = json!(false);
+    let recipe_path = write_recipe(h.dir.path(), "unregistered.json", &recipe);
+    let outcome = run_pack_recipe(&recipe_path, Some(&h.registry_path), None).unwrap();
+    assert!(!outcome.registered);
+    let scratch_pack = h.dir.path().join("scratch/test-pack-v1.goz1");
+    assert!(
+        scratch_pack.is_file(),
+        "the unregistered pack must still be written"
+    );
+
+    let registry: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&h.registry_path).unwrap()).unwrap();
+    assert_eq!(registry["models"].as_object().unwrap().len(), 1);
+    assert_eq!(
+        fs::read(h.output_dir.join("test-pack-v1.goz1")).unwrap(),
+        fs::read(&scratch_pack).unwrap(),
+        "the registered pack must not be touched"
+    );
+}
+
+#[test]
+fn an_unregistered_run_must_not_overwrite_the_registered_outputs() {
+    let h = default_harness();
+    run_pack_recipe(&h.recipe_path, Some(&h.registry_path), None).unwrap();
+    let registered_pack = h.output_dir.join("test-pack-v1.goz1");
+    let before = fs::read(&registered_pack).unwrap();
+
+    let mut recipe = base_recipe(&h.output_dir);
+    recipe["outputs"]["register"] = json!(false);
+    let recipe_path = write_recipe(h.dir.path(), "unregistered.json", &recipe);
+    let err = run_pack_recipe(&recipe_path, Some(&h.registry_path), None).unwrap_err();
+    assert!(err.contains("collides with registry slug"), "{err}");
+    assert_eq!(fs::read(&registered_pack).unwrap(), before);
+}
+
+#[test]
+fn an_output_dir_override_wins_over_a_declared_artifact_path() {
+    let h = default_harness();
+    let mut recipe = base_recipe(&h.output_dir);
+    recipe["outputs"]["artifact_path"] =
+        json!(h.output_dir.join("test-pack-v1.goz1").display().to_string());
+    let recipe_path = write_recipe(h.dir.path(), "declared.json", &recipe);
+
+    let override_dir = h.dir.path().join("elsewhere");
+    let outcome =
+        run_pack_recipe(&recipe_path, Some(&h.registry_path), Some(&override_dir)).unwrap();
+    assert_eq!(outcome.pack_path, override_dir.join("test-pack-v1.goz1"));
+    assert!(outcome.pack_path.is_file());
 }
 
 #[test]

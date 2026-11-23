@@ -81,13 +81,18 @@ impl ArtifactRegistry {
     ///
     /// A replay replaces the entry only when it was written by `pack-goz1`,
     /// carries the same manifest id, and is still a planned skeleton.
+    ///
+    /// When `will_register` is false the registry is never written, so slug and
+    /// manifest-id ownership do not apply — the caller still has to clear the
+    /// output-path collision checks, which treat an existing same-slug entry as
+    /// foreign in that case.
     pub fn admit_pack(
         &self,
         slug: &str,
         manifest_id: &str,
         will_register: bool,
     ) -> Result<PackAdmission, String> {
-        if let Some(owner) = self.conflicting_manifest_owner(manifest_id, slug) {
+        if will_register && let Some(owner) = self.conflicting_manifest_owner(manifest_id, slug) {
             return Err(format!(
                 "outputs.manifest_id '{manifest_id}' is already registered to slug '{}'",
                 owner.slug
@@ -97,14 +102,14 @@ impl ArtifactRegistry {
             Some(existing) if will_register && own_planned_replay(existing, manifest_id) => {
                 Ok(PackAdmission::ReplaceOwnPlanned)
             }
-            Some(existing) => Err(format!(
+            Some(existing) if will_register => Err(format!(
                 "model slug '{slug}' is already registered (manifest_id '{}', producer: {}). \
                  The registry key is always `<source model slug>_goz1`; changing \
                  `outputs.manifest_id` cannot avoid this collision.",
                 existing.manifest_id,
                 existing.producer.as_deref().unwrap_or("unspecified")
             )),
-            None => Ok(PackAdmission::Insert),
+            _ => Ok(PackAdmission::Insert),
         }
     }
 
@@ -203,10 +208,13 @@ impl ArtifactRegistry {
             .as_ref()
             .filter(|_| same_manifest)
             .and_then(|entry| entry.producer.clone());
-        let generated_status = previous
+        // The manifest being registered is the source of truth for its own
+        // generated status; carrying the previous entry's status over would let
+        // a stale `planned` mark a finished pack as replayable.
+        let generated_status = manifest
+            .generated_artifact
             .as_ref()
-            .filter(|_| same_manifest)
-            .and_then(|entry| entry.generated_status.clone());
+            .and_then(|artifact| artifact.status.clone());
         let recipe_id = previous
             .as_ref()
             .filter(|_| same_manifest)
@@ -509,6 +517,86 @@ mod tests {
         assert!(stored.is_absolute());
         assert!(stored.is_file());
         assert_eq!(stored, std::fs::canonicalize(&manifest_path).unwrap());
+    }
+
+    #[test]
+    fn admit_pack_allows_an_unregistered_run_to_share_a_slug() {
+        let mut registry = ArtifactRegistry::new();
+        let slug = "grok_1_future_goz1";
+        registry.models.insert(
+            slug.to_string(),
+            RegistryEntry {
+                slug: slug.to_string(),
+                manifest_id: "test-pack-v1".to_string(),
+                family: "grok".to_string(),
+                status: "registered".to_string(),
+                registered_at: "2026-08-01T00:00:00Z".to_string(),
+                notes: None,
+                manifest_path: None,
+                producer: Some(PACK_GOZ1_PRODUCER.to_string()),
+                generated_status: Some("planned".to_string()),
+                recipe_id: None,
+            },
+        );
+        assert_eq!(
+            registry.admit_pack(slug, "test-pack-v1", false).unwrap(),
+            PackAdmission::Insert,
+            "an unregistered run never writes the registry, so slug ownership \
+             does not apply — the output-path checks guard the entry's files"
+        );
+        assert_eq!(
+            registry.admit_pack(slug, "test-pack-v1", true).unwrap(),
+            PackAdmission::ReplaceOwnPlanned,
+            "the same entry still replays when the run will register"
+        );
+    }
+
+    #[test]
+    fn register_or_update_takes_generated_status_from_the_manifest() {
+        let mut registry = ArtifactRegistry::new();
+        let slug = "test_model";
+        registry.models.insert(
+            slug.to_string(),
+            RegistryEntry {
+                slug: slug.to_string(),
+                manifest_id: "test-model-v1".to_string(),
+                family: "test".to_string(),
+                status: "registered".to_string(),
+                registered_at: "2026-08-01T00:00:00Z".to_string(),
+                notes: None,
+                manifest_path: None,
+                producer: Some(PACK_GOZ1_PRODUCER.to_string()),
+                generated_status: Some("planned".to_string()),
+                recipe_id: None,
+            },
+        );
+
+        let mut manifest = create_test_manifest();
+        manifest.generated_artifact = Some(crate::manifest::GeneratedArtifact {
+            format: "goz1".to_string(),
+            path: Some("/packs/test.goz1".to_string()),
+            status: Some("success".to_string()),
+            version: Some(1),
+            source_url: None,
+            checksum: None,
+            dtype_summary: None,
+            size_bytes: None,
+            shard_info: None,
+            timestamp: None,
+            source_lineage: None,
+            tensor_summary: None,
+        });
+        registry.register_or_update(&manifest, None).unwrap();
+        let entry = registry.lookup(slug).unwrap();
+        assert_eq!(
+            entry.generated_status.as_deref(),
+            Some("success"),
+            "the registered manifest's own status must replace the stale one"
+        );
+        assert!(
+            registry.admit_pack(slug, "test-model-v1", true).is_err(),
+            "a finished pack must not be replayable as a planned skeleton"
+        );
     }
 
     #[test]

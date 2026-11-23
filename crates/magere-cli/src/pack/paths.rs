@@ -111,6 +111,11 @@ fn resolve_manifest_path_reference(raw: &str, recipe: &Recipe) -> Result<Option<
             raw
         ));
     }
+    // A relative manifest path may also live relative to the caller's working
+    // directory when the recipe file itself sits outside a repository.
+    if as_manifest_path.exists() {
+        return Ok(Some(as_manifest_path.to_path_buf()));
+    }
     if looks_like_filesystem_path(raw) {
         return Err(format!(
             "Failed to load source manifest '{}': file not found",
@@ -266,15 +271,19 @@ fn paths_alias(left: &Path, right: &Path) -> bool {
 
 /// Refuse when a derived output path would overwrite another registry entry's files.
 ///
-/// Slug and manifest-id ownership live on [`ArtifactRegistry::admit_pack`].
+/// Slug and manifest-id ownership live on [`ArtifactRegistry::admit_pack`]. The
+/// same-slug entry is skipped only when the run will register — an admitted
+/// replay replaces its own outputs — because an unregistered run does not own
+/// those files and must not overwrite them either.
 pub(super) fn reject_output_aliases(
     registry: &ArtifactRegistry,
     slug: &str,
     pack_path: &Path,
     manifest_path: &Path,
+    will_register: bool,
 ) -> Result<(), String> {
     for entry in registry.models.values() {
-        if entry.slug == slug {
+        if will_register && entry.slug == slug {
             continue;
         }
         if entry_aliases_outputs(entry, pack_path, manifest_path)? {
@@ -370,6 +379,47 @@ mod tests {
         let (resolved, _) = resolve_source_manifest(&recipe, &registry).unwrap();
         assert!(resolved.ends_with("manifests/beside.json"));
         assert!(resolved.is_file());
+    }
+
+    #[test]
+    fn a_relative_manifest_path_outside_the_repo_resolves_from_cwd() {
+        // The recipe lives outside any repository, so the recipe-relative
+        // search finds nothing; the reference still resolves from the working
+        // directory (the crate root under cargo test).
+        let name = format!("cwd-fallback-{}.json", std::process::id());
+        fs::copy(
+            PathBuf::from(SOURCE),
+            std::env::current_dir().unwrap().join(&name),
+        )
+        .unwrap();
+
+        let dir = TempDir::new().unwrap();
+        let recipe_body = json!({
+            "recipe_id": "cwd-pack",
+            "type": "ternary_pack",
+            "inputs": { "source_manifest": name },
+            "outputs": {
+                "generated_format": "goz1",
+                "manifest_id": "test-pack-v1",
+                "output_dir": dir.path().join("packs").display().to_string()
+            },
+            "pack": {
+                "dissect_manifest": DISSECT,
+                "input_format": "safetensors"
+            }
+        });
+        let recipe_path = dir.path().join("pack.json");
+        fs::write(
+            &recipe_path,
+            serde_json::to_string_pretty(&recipe_body).unwrap(),
+        )
+        .unwrap();
+        let recipe = load_pack_recipe(&recipe_path).unwrap();
+        let registry = ArtifactRegistry::new();
+        let resolved = resolve_source_manifest(&recipe, &registry);
+        let _ = fs::remove_file(std::env::current_dir().unwrap().join(&name));
+        let (resolved, _) = resolved.expect("cwd-relative manifest must resolve");
+        assert!(resolved.ends_with(&name));
     }
 
     #[test]

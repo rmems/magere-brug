@@ -18,7 +18,7 @@ pub struct RegistryLock {
 
 impl RegistryLock {
     pub fn acquire(registry_file: &Path) -> Result<Self, String> {
-        let path = lock_path(registry_file);
+        let path = lock_path(&registry_identity(registry_file));
         ensure_lock_parent(&path)?;
         let file = OpenOptions::new()
             .create(true)
@@ -68,7 +68,52 @@ pub fn store_registry(registry: &ArtifactRegistry, registry_file: &Path) -> Resu
     let registry_json = registry
         .to_json_pretty()
         .map_err(|e| format!("Failed to serialize registry: {}", e))?;
-    write_bytes_atomically(registry_file, registry_json.as_bytes())
+    write_bytes_atomically(&registry_identity(registry_file), registry_json.as_bytes())
+}
+
+/// The file the registry path actually names.
+///
+/// Aliases — a final-component symlink, a symlinked parent directory, or a
+/// `a/../a` spelling — all converge on one canonical path so they share a
+/// single lock file, and so an atomic write updates the real file instead of
+/// replacing the symlink that pointed at it.
+fn registry_identity(registry_file: &Path) -> PathBuf {
+    let mut resolved = registry_file.to_path_buf();
+    for _ in 0..8 {
+        let Ok(meta) = std::fs::symlink_metadata(&resolved) else {
+            break;
+        };
+        if !meta.file_type().is_symlink() {
+            break;
+        }
+        let Ok(target) = std::fs::read_link(&resolved) else {
+            break;
+        };
+        resolved = if target.is_absolute() {
+            target
+        } else {
+            resolved
+                .parent()
+                .unwrap_or_else(|| Path::new("."))
+                .join(target)
+        };
+    }
+    if let Ok(canonical) = std::fs::canonicalize(&resolved) {
+        return canonical;
+    }
+    // The file does not exist yet: canonicalize its parent so lexical and
+    // symlinked-directory aliases still converge on the same lock name.
+    match (
+        resolved
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty()),
+        resolved.file_name(),
+    ) {
+        (Some(parent), Some(name)) => std::fs::canonicalize(parent)
+            .map(|parent| parent.join(name))
+            .unwrap_or_else(|_| registry_file.to_path_buf()),
+        _ => registry_file.to_path_buf(),
+    }
 }
 
 fn lock_path(registry_file: &Path) -> PathBuf {
@@ -129,5 +174,62 @@ mod tests {
         let path = dir.path().join("no-such-registry.json");
         let registry = load_registry(&path).unwrap();
         assert_eq!(registry.count(), 0);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_symlinked_registry_writes_through_to_its_target() {
+        use std::os::unix::fs::symlink;
+
+        let dir = tempfile::TempDir::new().unwrap();
+        let target = dir.path().join("real-registry.json");
+        std::fs::write(&target, "{\"version\":1,\"models\":{}}").unwrap();
+        let alias = dir.path().join("alias-registry.json");
+        symlink(&target, &alias).unwrap();
+
+        let mut registry = ArtifactRegistry::new();
+        registry.version = 7;
+        store_registry(&registry, &alias).unwrap();
+
+        assert!(
+            std::fs::symlink_metadata(&alias)
+                .unwrap()
+                .file_type()
+                .is_symlink(),
+            "the store must update the target, not replace the symlink"
+        );
+        let stored: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&target).unwrap()).unwrap();
+        assert_eq!(stored["version"], serde_json::json!(7));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn symlinked_registry_aliases_share_one_lock() {
+        use std::os::unix::fs::symlink;
+
+        let dir = tempfile::TempDir::new().unwrap();
+        let target = dir.path().join("real-registry.json");
+        std::fs::write(&target, "{\"version\":1,\"models\":{}}").unwrap();
+        let alias = dir.path().join("alias-registry.json");
+        symlink(&target, &alias).unwrap();
+
+        let held = RegistryLock::acquire(&target).unwrap();
+        let (started, started_rx) = mpsc::channel();
+        let (acquired, acquired_rx) = mpsc::channel();
+        thread::spawn(move || {
+            started.send(()).unwrap();
+            let _lock = RegistryLock::acquire(&alias).unwrap();
+            acquired.send(()).unwrap();
+        });
+        started_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        assert!(
+            acquired_rx
+                .recv_timeout(Duration::from_millis(200))
+                .is_err(),
+            "a lock through a symlink alias must wait on the target's lock"
+        );
+        drop(held);
+        acquired_rx.recv_timeout(Duration::from_secs(2)).unwrap();
     }
 }

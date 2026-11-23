@@ -327,6 +327,28 @@ fn test_pack_recipe_explicit_input_format_allows_unpackable_manifest_format() {
 }
 
 #[test]
+fn test_pack_recipe_declared_source_format_with_input_format_override() {
+    // With `pack.input_format` set, `inputs.source_format` is only an
+    // assertion about the manifest's format — the packer never reads the
+    // bytes as that format — so the semantic layer must accept what
+    // `pack-goz1` runs. (The schema still restricts the enum for pack
+    // recipes; this pins the standalone semantic contract.)
+    let (_dir, recipe) = recipe_in_temp_dir(
+        r#"{
+          "recipe_id": "pack-gguf-declared-override",
+          "type": "ternary_pack",
+          "inputs": { "source_manifest": "manifest.json", "source_format": "gguf" },
+          "outputs": { "generated_format": "goz1" },
+          "pack": { "input_format": "safetensors" }
+        }"#,
+        &sample_manifest_json("sample-v1", "sample_model", "gguf"),
+    );
+    recipe
+        .validate_semantics()
+        .expect("declared source_format is a manifest assertion once pack.input_format is set");
+}
+
+#[test]
 fn test_pack_recipe_defaults_to_registering() {
     let recipe = Recipe::from_json(
         r#"{

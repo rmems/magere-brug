@@ -100,7 +100,12 @@ impl Recipe {
                 VALID_SOURCE_FORMATS.join(", ")
             ));
         }
-        self.reject_unpackable_source_format(source_format)?;
+        // `pack.input_format` declares how the packer reads the bytes, so a
+        // declared source_format is then only an assertion about the manifest —
+        // the same escape hatch validate_typed_source_constraints honors.
+        if !self.pack_input_format_declared() {
+            self.reject_unpackable_source_format(source_format)?;
+        }
         self.reject_unexportable_source_format(source_format)
     }
 

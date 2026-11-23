@@ -114,6 +114,26 @@ pub(crate) fn registry_identity(registry_file: &Path) -> PathBuf {
     canonicalize_parent(&resolved).unwrap_or_else(|| registry_file.to_path_buf())
 }
 
+/// Every directory entry in `path`'s final-component symlink chain, starting
+/// with `path` itself when it is a link. Collision checks protect only the
+/// spelled path and the resolved destination; an output landing on an
+/// intermediate link would replace it and leave the registry resolving to
+/// artifact bytes.
+pub(crate) fn symlink_chain_entries(path: &Path) -> Vec<PathBuf> {
+    let mut chain = Vec::new();
+    let mut resolved = path.to_path_buf();
+    for _ in 0..8 {
+        match symlink_target(&resolved) {
+            Some(target) => {
+                chain.push(resolved);
+                resolved = target;
+            }
+            None => break,
+        }
+    }
+    chain
+}
+
 /// Follow a final-component symlink (and short chains) so a write through an
 /// alias lands on the real file instead of replacing the link.
 fn follow_final_symlink(path: &Path) -> PathBuf {

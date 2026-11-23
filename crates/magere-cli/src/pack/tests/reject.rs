@@ -254,6 +254,37 @@ fn refuses_a_registry_symlink_occupying_an_output_path() {
 }
 
 #[test]
+#[cfg(unix)]
+fn refuses_a_pack_output_matching_an_intermediate_registry_link() {
+    use std::os::unix::fs::symlink;
+
+    let h = default_harness();
+    fs::create_dir_all(&h.output_dir).unwrap();
+    // registry.json -> <planned .goz1 output> -> state/registry.json: the
+    // middle link is a directory entry neither the spelled path nor the final
+    // target covers, so an atomic write there would replace the link and
+    // leave the registry resolving to artifact bytes.
+    let state = h.dir.path().join("state");
+    fs::create_dir_all(&state).unwrap();
+    let target = state.join("registry.json");
+    let middle = h.output_dir.join("test-pack-v1.goz1");
+    let spelled = h.dir.path().join("registry.json");
+    symlink(&target, &middle).unwrap();
+    symlink(&middle, &spelled).unwrap();
+
+    let err = run_pack_recipe(&h.recipe_path, Some(&spelled), None).unwrap_err();
+    assert!(err.contains("would overwrite"), "{err}");
+    assert!(
+        fs::symlink_metadata(&middle)
+            .unwrap()
+            .file_type()
+            .is_symlink(),
+        "the intermediate registry link must survive untouched"
+    );
+    assert!(!target.exists(), "the registry target must not be created");
+}
+
+#[test]
 fn refuses_to_overwrite_an_input_aliased_by_an_output_path() {
     let dir = test_dir();
     let output_dir = dir.path().join("packs");

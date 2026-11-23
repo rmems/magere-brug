@@ -233,6 +233,12 @@ pub(super) fn reject_aliased_outputs(
     }
     for registry_path in registry_paths {
         protected.push(resolve_entry(registry_path)?);
+        // Intermediate links in a symlink chain are entries too: an output
+        // replacing one would leave the registry resolving to artifact
+        // bytes even though the spelled path and final target are protected.
+        for link in crate::registry_io::symlink_chain_entries(registry_path) {
+            protected.push(resolve_entry(&link)?);
+        }
     }
     for output in [pack_path, manifest_path] {
         let resolved = resolve_planned(output)?;
@@ -477,12 +483,7 @@ mod tests {
         // The recipe lives outside any repository, so the recipe-relative
         // search finds nothing; the reference still resolves from the working
         // directory (the crate root under cargo test).
-        let name = format!("cwd-fallback-{}.json", std::process::id());
-        fs::copy(
-            PathBuf::from(SOURCE),
-            std::env::current_dir().unwrap().join(&name),
-        )
-        .unwrap();
+        let (_cwd_file, name) = cwd_manifest_fixture("cwd-fallback");
 
         let dir = TempDir::new().unwrap();
         let recipe_body = json!({
@@ -508,7 +509,6 @@ mod tests {
         let recipe = load_pack_recipe(&recipe_path).unwrap();
         let registry = ArtifactRegistry::new();
         let resolved = resolve_source_manifest(&recipe, &registry);
-        let _ = fs::remove_file(std::env::current_dir().unwrap().join(&name));
         let (resolved, _) = resolved.expect("cwd-relative manifest must resolve");
         assert!(resolved.ends_with(&name));
     }
@@ -520,12 +520,7 @@ mod tests {
         // file from the process working directory (a different checkout).
         let repo = TempDir::new().unwrap();
         fs::create_dir(repo.path().join(".git")).unwrap();
-        let name = format!("cwd-leak-{}.json", std::process::id());
-        fs::copy(
-            PathBuf::from(SOURCE),
-            std::env::current_dir().unwrap().join(&name),
-        )
-        .unwrap();
+        let (_cwd_file, name) = cwd_manifest_fixture("cwd-leak");
 
         let recipe_body = json!({
             "recipe_id": "in-repo-pack",
@@ -550,7 +545,6 @@ mod tests {
         let recipe = load_pack_recipe(&recipe_path).unwrap();
         let registry = ArtifactRegistry::new();
         let resolved = resolve_source_manifest(&recipe, &registry);
-        let _ = fs::remove_file(std::env::current_dir().unwrap().join(&name));
         let err = resolved.expect_err("an in-repo recipe must not resolve manifests from cwd");
         assert!(
             err.contains("file not found") || err.contains("not a readable path"),
@@ -603,6 +597,39 @@ mod tests {
         ArtifactRegistry::from_json(&registry_json.to_string()).unwrap()
     }
 
+    /// An exclusively-created `*.json` manifest copy in the process working
+    /// directory — the cwd-fallback tests need a real file there. The name is
+    /// deterministic (pid + counter, no random characters that could spell
+    /// the schema's banned substrings), creation is exclusive so a stale file
+    /// cannot be overwritten, and the guard deletes it on drop.
+    fn cwd_manifest_fixture(stem: &str) -> (tempfile::NamedTempFile, String) {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        static COUNTER: AtomicUsize = AtomicUsize::new(0);
+        let cwd = std::env::current_dir().unwrap();
+        for _ in 0..8 {
+            let base = format!(
+                "{stem}-{}-{}",
+                std::process::id(),
+                COUNTER.fetch_add(1, Ordering::Relaxed)
+            );
+            match tempfile::Builder::new()
+                .prefix(&base)
+                .suffix(".json")
+                .rand_bytes(0)
+                .tempfile_in(&cwd)
+            {
+                Ok(file) => {
+                    fs::copy(PathBuf::from(SOURCE), file.path()).unwrap();
+                    return (file, format!("{base}.json"));
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                Err(error) => panic!("failed to create a cwd fixture: {error}"),
+            }
+        }
+        panic!("could not create a uniquely named cwd fixture");
+    }
+
     fn pack_recipe_for(dir: &Path, source_manifest: &str) -> Recipe {
         let recipe_body = json!({
             "recipe_id": "registry-json-id-pack",
@@ -650,14 +677,11 @@ mod tests {
         // win over a same-named file in the working directory.
         let repo = TempDir::new().unwrap();
         fs::create_dir(repo.path().join(".git")).unwrap();
-        let name = format!("baseline-{}.json", std::process::id());
-        let cwd_file = std::env::current_dir().unwrap().join(&name);
-        fs::copy(PathBuf::from(SOURCE), &cwd_file).unwrap();
+        let (_cwd_file, name) = cwd_manifest_fixture("baseline");
 
         let recipe = pack_recipe_for(repo.path(), &name);
         let registry = registry_with_manifest_id(&name);
         let resolved = resolve_source_manifest(&recipe, &registry);
-        let _ = fs::remove_file(&cwd_file);
         let (resolved, _) = resolved.expect("the registry entry must resolve the bare name");
         assert_eq!(
             resolved,

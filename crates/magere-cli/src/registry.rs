@@ -105,7 +105,9 @@ impl ArtifactRegistry {
             Some(existing) if will_register => Err(format!(
                 "model slug '{slug}' is already registered (manifest_id '{}', producer: {}). \
                  The registry key is always `<source model slug>_goz1`; changing \
-                 `outputs.manifest_id` cannot avoid this collision.",
+                 `outputs.manifest_id` cannot avoid this collision. If the entry is a \
+                 stale planned pack written before pack provenance existed, remove it or \
+                 `magere register` the completed manifest before replaying.",
                 existing.manifest_id,
                 existing.producer.as_deref().unwrap_or("unspecified")
             )),
